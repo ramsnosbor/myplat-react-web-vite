@@ -12,13 +12,27 @@ export interface ViewDefinition {
 export interface EntityNode {
   id: string
   entity: string
-  params: Record<string, unknown>
+  params?: Record<string, unknown>
   orderBy?: string
+  url?: string
+  data?: unknown
   pagination?: {
     pageNumber: number
     pageSize: number
     totalPages: number | null
     totalElements: number | null
+  }
+}
+
+/** Estrutura bruta retornada pela API antes de normalização */
+export interface RawViewResponse {
+  name: string
+  view: {
+    objects?: Omit<ObjectDefinition, 'components'>[]
+    components?: ComponentDefinition[]
+    entities?: EntityNode[]
+    connections?: Connection[]
+    navbars?: any[]
   }
 }
 
@@ -38,16 +52,25 @@ export interface Connection {
 
 // ─── Navbar ───────────────────────────────────────────────────────────────────
 
+export interface NavbarTab {
+  id: string
+  label?: string
+  objects: string[]
+  visible?: string
+}
+
 export interface Navbar {
   id: string
-  label: string
+  label?: string
   icon?: string
-  objects: string[]
+  class?: string
+  style?: Record<string, string>
+  tabs: NavbarTab[]
 }
 
 // ─── Object Definition ────────────────────────────────────────────────────────
 
-export type ObjectType = 'crud' | 'table' | 'filter' | 'panel' | 'calendar' | 'bulkEditTable' | 'wizard'
+export type ObjectType = 'crud' | 'table' | 'filter' | 'panel' | 'calendar' | 'bulkEditTable' | 'wizard' | 'chart' | 'grid'
 export type ObjectMode = 'create' | 'edit' | 'detail' | ''
 export type ObjectVariant = 'modal' | 'page' | 'inline' | ''
 
@@ -98,6 +121,8 @@ export interface ObjectDefinition {
   variant?: ObjectVariant
   size?: string
   centered?: boolean
+  dynamic?: boolean
+  hideButtons?: boolean
   filterObjectId?: string
   navigateTo?: string
   asyncProcess?: boolean
@@ -115,7 +140,7 @@ export interface ObjectDefinition {
   editable?: boolean
   deleteShow?: boolean
   emptyState?: string
-  addRowButton?: boolean
+  addRowButton?: boolean | { label?: string; icon?: string; variant?: string; defaults?: Record<string, unknown> }
   collapsible?: boolean
   collapsedByDefault?: boolean
   totalise?: boolean
@@ -123,6 +148,14 @@ export interface ObjectDefinition {
   objectList?: string[]
   selectAllDefault?: boolean
   filterButtonName?: string
+  filterButtonIcon?: string | false
+  createObject?: string
+  createButtonIcon?: string | false
+  createButtonVariant?: string
+  clearFilter?: boolean
+  collapsibleVariant?: string
+  collapsibleIcon?: string
+  pageSizes?: number[]
   initialSubmit?: boolean
   panelBodyStyle?: Record<string, string>
   panelCardStyle?: Record<string, string>
@@ -141,6 +174,10 @@ export interface ObjectDefinition {
   month?: boolean
   tabs?: Tab[]
   steps?: Step[]
+  // Grid
+  gap?: number
+  columns?: { xs?: number; sm?: number; md?: number; lg?: number }
+  itemStyle?: Record<string, string>
   components: ComponentDefinition[]
 }
 
@@ -150,11 +187,16 @@ export interface HookAction {
 }
 
 export interface SubmitAction {
-  action: 'executeScript' | 'updateConnections' | 'showObject' | 'closeObject'
+  action: 'executeScript' | 'updateConnections' | 'showObject' | 'closeObject' | 'saveMany' | 'reload'
   script?: string
+  scriptId?: string
   object?: string
   objectAction?: string
   reloadParent?: boolean
+  /** saveMany: entidade alvo (opcional — usa a do objeto se omitido) */
+  entity?: string
+  /** saveMany: campo que identifica se é create (null/0) ou update */
+  primaryKey?: string
 }
 
 export interface CrudAction {
@@ -164,11 +206,21 @@ export interface CrudAction {
   variant?: string
   size?: string
   visibleOn?: string[]
-  visible?: string
+  visible?: string | boolean
   tooltip?: string
   reloadAfterAction?: boolean
   params?: Record<string, string>
   confirmation?: string
+  // action: "executeScript"
+  script?: string
+  scriptId?: string
+  // action: "api"
+  method?: string
+  url?: string
+  data?: Record<string, string>
+  // action: "showObject" / "closeObject"
+  object?: string
+  objectAction?: string
 }
 
 export interface PopoverField {
@@ -204,19 +256,24 @@ export type ComponentType =
   | 'switch' | 'checkbox' | 'textarea' | 'label' | 'title' | 'template'
   | 'file' | 'image' | 'richtext' | 'color' | 'mask' | 'range'
   | 'chart' | 'pivot' | 'kanban' | 'monaco' | 'cep' | 'link' | 'button'
-  | 'html' | 'hidden'
+  | 'html' | 'hidden' | 'generalActions' | 'currency' | 'chipselect' | 'groupcheckbox' | 'linkpanel'
+  | 'actions'
 
 export interface ComponentDefinition {
   idComponent: number
   idObject?: string
   idTab?: string
   type: ComponentType
-  name: string
+  name: string       // campo da entidade (dado)
+  title?: string     // cabeçalho da coluna (tabela)
   nameForm?: string
   label?: string
   description?: string
   placeholder?: string
+  icon?: string
   required?: boolean
+  variant?: string
+  editable?: boolean
   disabled?: boolean
   disabledOn?: string[]
   disabledRule?: string
@@ -225,6 +282,7 @@ export interface ComponentDefinition {
   visible?: string
   hidden?: boolean
   class?: string
+  className?: string  // alias Bootstrap legado (BulkEditTable usa className em vez de class)
   md?: number | null
   sm?: number | null
   xs?: number | null
@@ -251,8 +309,8 @@ export interface ComponentDefinition {
   rangeParam?: string
   maxDays?: number | null
 
-  // Select
-  options?: Array<{ text: string; value: string }>
+  // Select / ChipSelect
+  options?: Array<{ text: string; value: string; nameForm?: string }>
   multiple?: boolean
   clearable?: boolean
   dataOptions?: string
@@ -274,16 +332,29 @@ export interface ComponentDefinition {
   loadOnFocus?: boolean
   autoSelectFirst?: boolean
   contextParams?: Record<string, unknown>
+  /** Campo que contém o caminho hierárquico separado por ||| (ex: "path_string") */
+  pathField?: string
+  /** Campo que contém o nível de profundidade para indentação visual (ex: "nivel") */
+  levelField?: string
+  /** Separador do pathField — padrão: "|||" */
+  pathSeparator?: string
 
-  // Switch/Checkbox
+  // Switch/Checkbox/ChipSelect/GroupCheckbox
   checkedValue?: string
   uncheckedValue?: string
+  /** GroupCheckbox: seleção exclusiva (radio) */
+  singleSelect?: boolean
+  /** GroupCheckbox: número de colunas no grid */
+  columns?: number
 
   // Textarea
   rows?: number | null
+  /** Impede quebra de linha no textarea (bloqueia Enter e limpa \n no onChange/paste) */
+  noLineBreak?: boolean
 
-  // Label/Title
+  // Label/Title / BulkEditTable
   labelStyle?: Record<string, string>
+  titleStyle?: Record<string, string>   // alias usado no BulkEditTable (col header label)
   valueStyle?: Record<string, string>
 
   // Template
@@ -308,8 +379,10 @@ export interface ComponentDefinition {
   cx?: string
   cy?: string
 
-  // Link/Button
+  // Link/Button/LinkPanel
   link?: string
+  iconColor?: string
+  iconBg?: string
   url?: string
   method?: string
   target?: string
@@ -331,11 +404,16 @@ export interface ComponentDefinition {
 
 export interface ComponentAction {
   action: string
-  name?: string
-  icon?: string
-  variant?: string
+  title?: string        // label do botão (generalActions usa title)
+  name?: string         // alias legacy de title
+  icon?: string         // classe Bootstrap Icons, ex: "bi bi-plus-circle"
+  variant?: string      // primary | danger | success | warning | secondary | outline-*
+  style?: Record<string, string>  // CSS inline no botão
   tooltip?: string
   confirmation?: string
+  type?: string         // para export: "PDF" | "CSV"
+  url?: string          // para navigate: rota destino
+  entities?: string[]   // entidades relacionadas (export/navigate)
   visibleOn?: string[]
   visible?: string
   keyboardShortcut?: string

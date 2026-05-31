@@ -207,11 +207,27 @@ export function FieldRenderer({ component: comp, register, control, setValue, wa
         </div>
       )
 
-    case 'textarea':
+    case 'textarea': {
+      const noLineBreak = !!comp.noLineBreak
+      const { onChange: rhfOnChange, ...restReg } = register(fieldName, registerOpts)
       return wrapField(
-        <textarea rows={comp.rows ?? 3} placeholder={comp.placeholder ?? ''} disabled={isDisabled}
-          className={inputClass} {...register(fieldName, registerOpts)} />
+        <textarea
+          rows={comp.rows ?? 3}
+          placeholder={comp.placeholder ?? ''}
+          disabled={isDisabled}
+          className={inputClass}
+          {...restReg}
+          onChange={noLineBreak
+            ? (e) => { e.target.value = e.target.value.replace(/[\r\n]/g, ''); rhfOnChange(e) }
+            : rhfOnChange
+          }
+          onKeyDown={noLineBreak
+            ? (e) => { if (e.key === 'Enter') e.preventDefault() }
+            : undefined
+          }
+        />
       )
+    }
 
     case 'switch':
     case 'checkbox':
