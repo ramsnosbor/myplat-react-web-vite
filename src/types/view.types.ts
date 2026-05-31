@@ -328,6 +328,8 @@ export interface ComponentDefinition {
     resetOnParentUpdate?: boolean
   }
   fields?: Array<{ field: string; as: string }>
+  /** Mapeamento de campos do retorno do CEP para campos do form (type: cep) */
+  cepFields?: Record<string, string>
   lockupFields?: string[]
   loadOnFocus?: boolean
   autoSelectFirst?: boolean

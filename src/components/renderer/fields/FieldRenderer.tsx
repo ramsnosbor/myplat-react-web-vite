@@ -15,6 +15,7 @@ import { SelectField } from './SelectField'
 import { DateField } from './DateField'
 import { NumberField } from './NumberField'
 import { CpfCnpjField, PhoneNumberField, EmailField } from './MaskedField'
+import { CepField } from './CepField'
 import { evalExpr } from '@/utils/evalExpr'
 import { useViewContext } from '../ViewContext'
 import { resolveColClass } from '@/utils/colClass'
@@ -134,6 +135,14 @@ export function FieldRenderer({ component: comp, register, control, setValue, wa
       return (
         <div className={colClass}>
           <SelectField component={comp} control={control} setValue={setValue} disabled={isDisabled} inputClass={inputClass} error={errorMessage} formValues={formValues} />
+        </div>
+      )
+
+    case 'cep':
+      return (
+        <div className={colClass}>
+          <CepField component={comp} control={control} setValue={setValue}
+            disabled={isDisabled} inputClass={inputClass} error={errorMessage} />
         </div>
       )
 
