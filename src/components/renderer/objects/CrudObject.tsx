@@ -25,7 +25,7 @@ type CrudMode = 'create' | 'edit' | 'detail'
 
 export function CrudObject({ objectDef }: Props) {
   const navigate = useNavigate()
-  const { viewStore, initialParams = {}, connections } = useViewContext()
+  const { viewStore, initialParams = {}, connections, definition } = useViewContext()
   const objectState = useStore(viewStore, (s) => s.objects[objectDef.id])
   const setObjectState = useStore(viewStore, (s) => s.setObjectState)
   const queryClient = useQueryClient()
@@ -176,6 +176,22 @@ export function CrudObject({ objectDef }: Props) {
       // Invalida queries da entidade para forçar reload em tabelas filhas
       queryClient.invalidateQueries({ queryKey: ['entity', objectDef.entity] })
 
+      // Invalida entidades de objetos irmãos (filhos do mesmo pai na connection).
+      // Ex: salvar CRUDPessoaEndereco (entity: pessoa_endereco) também invalida
+      // tabelaPessoaEndereco (entity: vPessoaEndereco), que é irmão pelo pai CRUDPessoa.
+      const myParentConns = connections.filter((c) => c.child === objectDef.id)
+      for (const conn of myParentConns) {
+        const siblings = connections.filter(
+          (c) => c.parent === conn.parent && c.child !== objectDef.id,
+        )
+        for (const sib of siblings) {
+          const sibObj = definition.objects.find((o) => o.id === sib.child)
+          if (sibObj?.entity && sibObj.entity !== objectDef.entity) {
+            queryClient.invalidateQueries({ queryKey: ['entity', sibObj.entity] })
+          }
+        }
+      }
+
       // Normaliza o resultado: EntityMutationResponse tem .data, ou pode vir diretamente
       const newRecord: Record<string, unknown> =
         result.data ?? (result as unknown as Record<string, unknown>)
@@ -273,6 +289,18 @@ export function CrudObject({ objectDef }: Props) {
     const body = Object.fromEntries(
       Object.entries(values).filter(([key]) => !transientKeys.has(key))
     )
+    // Garante FKs da connection pai→filho no body.
+    // Cobre o caso em que o modal abre antes de connectionParams estar populado
+    // e o defaultValue "{{campo}}" não resolve (fica como string literal ou vazio).
+    for (const [key, value] of Object.entries(connectionParams)) {
+      if (transientKeys.has(key)) continue
+      const current = body[key]
+      const isUnresolved =
+        typeof current === 'string' && /\{\{/.test(current)
+      if (current === undefined || current === null || current === '' || isUnresolved) {
+        body[key] = value
+      }
+    }
     mutation.mutate(body)
   }
 
