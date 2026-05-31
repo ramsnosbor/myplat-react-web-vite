@@ -7,6 +7,7 @@ import { authApi } from '@/api/auth.api'
 import { setClientToken } from '@/api/client'
 import { getNextIdentityValidationPath, saveIdentityValidationState, storeSupportedTenantsFromToken } from './authFlow'
 import { useAuthStore } from '@/store/authStore'
+import { parseJwt, type JwtPayload } from '@/lib/jwt'
 
 const schema = z.object({
   username: z.string().min(1, 'Usuario obrigatorio'),
@@ -192,6 +193,10 @@ export async function finalizarLogin(
   setToken(tenantRes.token)
   setTenant({ code: tenantCode, label: tenantLabel })
 
+  // Lê os módulos liberados para o tenant diretamente do token
+  const tenantModules = parseJwt<JwtPayload>(tenantRes.token).tenantModules ?? []
+  const allowedModuleIds = new Set(tenantModules)
+
   const [permissions, userData] = await Promise.allSettled([
     authApi.getPermissions(),
     authApi.getLoggedUser(),
@@ -211,6 +216,9 @@ export async function finalizarLogin(
     const allModules = await authApi.getSystemModules()
 
     const filtered = allModules
+      // 1. Filtra somente módulos liberados para o tenant (tenantModules do token)
+      .filter((mod) => allowedModuleIds.size === 0 || allowedModuleIds.has(mod.idModulo))
+      // 2. Filtra menus sem acesso via ACL
       .map((mod) => ({
         ...mod,
         menus: (mod.menus ?? []).filter((menu) => {
