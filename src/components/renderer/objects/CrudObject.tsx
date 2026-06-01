@@ -7,6 +7,7 @@ import { useViewContext } from '../ViewContext'
 import { useConnectionParams } from '../ObjectRenderer'
 import { FieldRenderer } from '../fields/FieldRenderer'
 import { entityApi } from '@/api/entity.api'
+import type { EntitySchemaResponse } from '@/api/entity.api'
 import { scriptApi } from '@/api/script.api'
 import { apiClient } from '@/api/client'
 import { useToast } from '@/components/ui/Toast'
@@ -38,6 +39,17 @@ export function CrudObject({ objectDef }: Props) {
     entityMap[e.id] = e.entity ?? e.id
   }
   const entityName = entityMap[objectDef.entity] ?? objectDef.entity
+
+  // Schema da entidade — pré-carregado para que o config.primary esteja disponível
+  // no onSuccess sem precisar de uma chamada extra assíncrona na hora do submit.
+  // Habilitado apenas quando afterSubmit:'edit' (único caso que precisa da PK).
+  const { data: entitySchema } = useQuery<EntitySchemaResponse>({
+    queryKey: ['entity-schema', entityName],
+    queryFn: () => entityApi.getSchema(entityName),
+    enabled: !!entityName && objectDef.afterSubmit === 'edit',
+    staleTime: Infinity,  // schema não muda durante a sessão
+    gcTime: Infinity,
+  })
 
   const connectionParams = useConnectionParams(objectDef.id)
 
@@ -238,29 +250,33 @@ export function CrudObject({ objectDef }: Props) {
       if (after === 'edit') {
         if (isCreate) {
           // Após CREATE com afterSubmit:'edit':
-          // Monta queryParams com os campos que os filhos buscam no pai (parentKeys das connections).
-          // É mais confiável que tentar adivinhar a PK pelo nome — cada connection declara
-          // exatamente qual campo do pai ela precisa (ex: id_financeiro, id_pessoa).
-          const parentConnKeys = connections
-            .filter((c) => c.parent === objectDef.id)
-            .flatMap((c) => Object.values(c.keys))
+          // Usa o schema da entidade (pré-carregado) para descobrir a PK real.
+          // objectDef.primaryKey sobrescreve se definido explicitamente no JSON.
+          const primary = objectDef.primaryKey ?? entitySchema?.config?.primary
 
-          // Fallback se não há connections: objectDef.primaryKey ou 'id'
-          const fallbackPk = objectDef.primaryKey ?? 'id'
-          const pkFields = parentConnKeys.length > 0 ? parentConnKeys : [fallbackPk]
-
-          const queryParamsForEdit: Record<string, unknown> = {}
-          for (const field of pkFields) {
-            const val = newRecord[field]
-            if (val !== undefined && val !== null) queryParamsForEdit[field] = val
+          if (!primary) {
+            toast.error(
+              `Chave primária não encontrada para a entidade "${entityName}". ` +
+              `Não é possível abrir o registro em modo de edição.`,
+            )
+            return
           }
 
-          // Reseta o form imediatamente com os dados retornados (evita flash de campo vazio)
+          const pkValue = newRecord[primary]
+
+          if (pkValue === undefined || pkValue === null) {
+            toast.error(
+              `Campo "${primary}" não encontrado no retorno do servidor. ` +
+              `Não é possível abrir o registro em modo de edição.`,
+            )
+            return
+          }
+
           form.reset({ ...buildDefaultValues(objectDef, initialParams), ...newRecord })
 
           setObjectState(objectDef.id, {
             mode: 'edit',
-            queryParams: queryParamsForEdit,
+            queryParams: { [primary]: pkValue },
             formData: newRecord,
             selectedRow: newRecord,
           })
@@ -580,15 +596,15 @@ export function CrudObject({ objectDef }: Props) {
         </h3>
       )}
 
-      {/* Loading do registro */}
-      {isLoadingRecord && (
+      {/* Loading inicial — só exibe o spinner quando não há formData ainda (primeira carga) */}
+      {isLoadingRecord && !objectState?.formData && (
         <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           Carregando...
         </div>
       )}
 
-      {!isLoadingRecord && (
+      {(!isLoadingRecord || !!objectState?.formData) && (
         <form onSubmit={form.handleSubmit(onSubmit)} noValidate>
           {/* Campos */}
           <div className="grid grid-cols-12 gap-3">
