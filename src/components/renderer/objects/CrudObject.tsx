@@ -219,7 +219,57 @@ export function CrudObject({ objectDef }: Props) {
       const newRecord: Record<string, unknown> =
         result.data ?? (result as unknown as Record<string, unknown>)
 
+      // Resolve a PK cedo — usada tanto na propagação para irmãos/filhos quanto no afterSubmit
+      const primary =
+        objectDef.primaryKey ??
+        result.primary ??
+        entitySchema?.config?.primary
+      const pkValue = primary ? newRecord[primary] : undefined
+
       toast.success('Salvo com sucesso.')
+
+      // ── Propaga estado para filhos/irmãos com a mesma entidade ──────────────
+      // Quando crudPessoa salva, os demais CRUDs com entity: pessoa (ex: abas
+      // crudPessoaJuridica, crudCertificado) devem exibir o mesmo registro.
+      // TableObject já reage via connectionParams; CrudObject precisa de
+      // queryParams explícito no seu objectState para atualizar o loadFilter.
+      const sameEntityQP: Record<string, unknown> =
+        primary && pkValue !== undefined ? { [primary]: pkValue } : {}
+
+      // 1. Filhos diretos com a mesma entidade
+      for (const conn of connections.filter((c) => c.parent === objectDef.id)) {
+        const childObj = definition.objects.find((o) => o.id === conn.child)
+        if (!childObj?.entity) continue
+        const childEntityName = entityMap[childObj.entity] ?? childObj.entity
+        if (childEntityName !== entityName) continue
+        // Monta QP usando o mapeamento de keys da connection (childKey ← parentKey)
+        const childQP: Record<string, unknown> = {}
+        for (const [ck, pk] of Object.entries(conn.keys ?? {})) {
+          if (newRecord[pk] !== undefined) childQP[ck] = newRecord[pk]
+        }
+        setObjectState(conn.child, {
+          mode: 'edit',
+          queryParams: Object.keys(childQP).length ? childQP : sameEntityQP,
+          selectedRow: newRecord,
+        })
+      }
+
+      // 2. Irmãos (filhos do mesmo pai) com a mesma entidade
+      for (const conn of myParentConns) {
+        for (const sib of connections.filter(
+          (c) => c.parent === conn.parent && c.child !== objectDef.id,
+        )) {
+          const sibObj = definition.objects.find((o) => o.id === sib.child)
+          if (!sibObj?.entity) continue
+          const sibEntityName = entityMap[sibObj.entity] ?? sibObj.entity
+          if (sibEntityName !== entityName) continue
+          setObjectState(sib.child, {
+            mode: 'edit',
+            queryParams: sameEntityQP,
+            selectedRow: newRecord,
+          })
+        }
+      }
 
       // Executa hooks afterCreate / afterUpdate
       const hooks = isCreate
@@ -258,16 +308,7 @@ export function CrudObject({ objectDef }: Props) {
       const after = objectDef.afterSubmit
       if (after === 'edit') {
         if (isCreate) {
-          // Após CREATE com afterSubmit:'edit':
-          // Prioridade da PK:
-          //   1. objectDef.primaryKey (explícito no JSON)
-          //   2. result.primary       (vem no retorno do POST: entities[0].config.primary)
-          //   3. entitySchema?.config.primary  (schema pré-carregado como fallback)
-          const primary =
-            objectDef.primaryKey ??
-            result.primary ??
-            entitySchema?.config?.primary
-
+          // Após CREATE com afterSubmit:'edit' — usa primary/pkValue já resolvidos acima
           if (!primary) {
             toast.error(
               `Chave primária não encontrada para a entidade "${entityName}". ` +
@@ -275,8 +316,6 @@ export function CrudObject({ objectDef }: Props) {
             )
             return
           }
-
-          const pkValue = newRecord[primary]
 
           if (pkValue === undefined || pkValue === null) {
             toast.error(
