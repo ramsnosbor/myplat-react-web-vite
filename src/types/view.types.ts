@@ -298,6 +298,8 @@ export interface ComponentDefinition {
   sm?: number | null
   xs?: number | null
   style?: Record<string, string>
+  /** Largura da coluna na tabela. Ex: "120px", "10%", "200px" */
+  width?: string
   defaultValue?: unknown
   rules?: unknown
   tooltip?: string

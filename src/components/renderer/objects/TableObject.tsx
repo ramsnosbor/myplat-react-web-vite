@@ -429,10 +429,16 @@ export function TableObject({ objectDef }: Props) {
                   {dataColumns.map((col, i) => {
                     const isNumeric = NUMERIC_TYPES.has(col.type)
                     const isSorted  = sortField === col.name
+                    // width pode vir como "col.width" (shorthand) ou dentro de col.style
+                    const colStyle: React.CSSProperties = {
+                      ...(col.width ? { width: col.width, maxWidth: col.width } : {}),
+                      ...(col.style as React.CSSProperties ?? {}),
+                    }
                     return (
                       <th
                         key={i}
                         onClick={() => handleSort(col.name)}
+                        style={Object.keys(colStyle).length ? colStyle : undefined}
                         className={[
                           'px-3 py-2 text-xs font-semibold cursor-pointer select-none transition-colors group',
                           isNumeric ? 'text-right' : 'text-left',
@@ -486,8 +492,16 @@ export function TableObject({ objectDef }: Props) {
                       >
                         {dataColumns.map((col, ci) => {
                           const isNumeric = NUMERIC_TYPES.has(col.type)
+                          const colStyle: React.CSSProperties = {
+                            ...(col.width ? { width: col.width, maxWidth: col.width, overflow: 'hidden' } : {}),
+                            ...(col.style as React.CSSProperties ?? {}),
+                          }
                           return (
-                          <td key={ci} className={`px-3 py-2 ${isNumeric ? 'text-right tabular-nums' : ''}`}>
+                          <td
+                            key={ci}
+                            style={Object.keys(colStyle).length ? colStyle : undefined}
+                            className={`px-3 py-2 ${isNumeric ? 'text-right tabular-nums' : ''}`}
+                          >
                             {col.type === 'template' || col.template
                               ? renderTemplate(col.template ?? '', row)
                               : formatCell(row[col.name], col)}
