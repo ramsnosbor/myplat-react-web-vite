@@ -236,12 +236,36 @@ export function CrudObject({ objectDef }: Props) {
       // Transição de modo após submit
       const after = objectDef.afterSubmit
       if (after === 'edit') {
-        setObjectState(objectDef.id, { mode: 'edit' })
+        if (isCreate) {
+          // Após CREATE com afterSubmit:'edit':
+          // Extrai a PK do registro criado para carregar o form em modo edição com o ID correto.
+          // Tenta objectDef.primaryKey, depois primeiro campo id_* do retorno, senão 'id'.
+          const pk =
+            objectDef.primaryKey ??
+            Object.keys(newRecord).find((k) => k.startsWith('id_')) ??
+            'id'
+          const pkValue = newRecord[pk]
+
+          // Reseta o form imediatamente com os dados retornados (evita flash de campo vazio)
+          form.reset({ ...buildDefaultValues(objectDef, initialParams), ...newRecord })
+
+          setObjectState(objectDef.id, {
+            mode: 'edit',
+            // queryParams com a PK faz o loadFilter encontrar o ID e habilitar a query
+            queryParams: pkValue !== undefined && pkValue !== null ? { [pk]: pkValue } : {},
+            formData: newRecord,
+            selectedRow: newRecord,
+          })
+        } else {
+          // Após UPDATE: já está em modo edição com o ID correto nos queryParams
+          setObjectState(objectDef.id, { mode: 'edit' })
+        }
       } else if (after === 'detail') {
         setObjectState(objectDef.id, { mode: 'detail' })
       } else if (after === 'create') {
         form.reset(buildDefaultValues(objectDef, initialParams))
-        setObjectState(objectDef.id, { mode: 'create', formData: null, selectedRow: null })
+        // Limpa queryParams também para garantir que o próximo create não herde o ID anterior
+        setObjectState(objectDef.id, { mode: 'create', formData: null, selectedRow: null, queryParams: {} })
       } else if (objectDef.variant === 'modal') {
         // Modal sem afterSubmit explícito → fecha após salvar
         setObjectState(objectDef.id, { mode: null, formData: null, selectedRow: null })
