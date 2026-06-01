@@ -32,10 +32,19 @@ export interface ScriptResult {
   messageError?: string
   reload?: boolean
   entity?: string
+  /** Atualiza campos do form: { fieldName: value } */
   formUpdates?: Record<string, unknown>
+  /** Atualiza campos específicos (formato autocomplete): [{ field, value, label? }] */
+  fieldUpdates?: Array<{ field: string; value: unknown; label?: string }>
+  /** Invalida queries dessas entidades após execução */
   affectedEntities?: string[]
+  /** JS callback a ser executado no client (legacy) */
   callback?: string
   data?: Record<string, unknown>
+  /** Redireciona após execução: url absoluta ou action:'back' */
+  redirect?: { url?: string; action?: string; delay?: number }
+  /** Abre um objeto (modal/inline) após execução */
+  openModal?: { objectId: string; action?: string; searchParams?: Record<string, unknown> }
 }
 
 // Parâmetros de paginação

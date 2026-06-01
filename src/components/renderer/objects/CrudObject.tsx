@@ -227,9 +227,18 @@ export function CrudObject({ objectDef }: Props) {
         : (objectDef.afterUpdate ?? [])
       for (const hook of hooks) {
         if (hook.type === 'script') {
-          scriptApi.execute(hook.name, { ...newRecord })
+          scriptApi.execute(hook.name, {
+            data: [],
+            inputs: newRecord,
+            formData: newRecord,
+            objectId: objectDef.id,
+            entity: entityName,
+            action: isCreate ? 'create' : 'edit',
+            entities: {},
+          })
             .then((res) => {
               if (res.messageError) toast.error(res.messageError)
+              if (res.message) toast.success(res.message)
               if (res.reload) queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
               for (const e of res.affectedEntities ?? []) {
                 queryClient.invalidateQueries({ queryKey: ['entity', e] })
@@ -373,32 +382,84 @@ export function CrudObject({ objectDef }: Props) {
     (c) => c.type !== 'generalActions',
   )
 
-  // Helper: executa um script com interpolação de params e feedback visual
+  // Helper: executa um script com payload completo (compatível com app legado)
+  // Payload espelhado do myplat-App/Object/index.js → executeButtonAction
   const runScript = useCallback(
     (scriptId: string, action: CrudAction) => {
       const values = form.getValues()
-      const inputs: Record<string, unknown> = {}
+
+      // Resolve customParams: interpola {{campo}} contra valores do form
+      const customParams: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(action.params ?? {})) {
-        inputs[k] = String(v).replace(/\{\{(\w+)\}\}/g, (_, f) =>
+        customParams[k] = String(v).replace(/\{\{(\w+)\}\}/g, (_, f) =>
           values[f] !== undefined ? String(values[f]) : '',
         )
       }
-      scriptApi.execute(scriptId, inputs)
+
+      // Payload no mesmo formato do app antigo (fields no root do body)
+      const payload: Record<string, unknown> = {
+        data: [],
+        inputs: values,
+        formData: values,
+        objectId: objectDef.id,
+        entity: entityName,
+        action: resolvedMode,      // 'create' | 'edit' | 'detail'
+        bulkSelectedData: [],
+        entities: {},
+        screenParams: {},
+        customParams,
+      }
+
+      scriptApi.execute(scriptId, payload)
         .then((result) => {
-          if (result.messageError) toast.error(result.messageError)
-          else if (result.message) toast.success(result.message)
-          // Recarrega se o script pediu OU se a action tem reloadAfterAction
+          if (result.messageError) {
+            toast.error(result.messageError)
+            return
+          }
+          if (result.message) toast.success(result.message)
+
+          // 1. Atualiza campos do form (formato objeto simples)
+          if (result.formUpdates) {
+            for (const [k, v] of Object.entries(result.formUpdates)) {
+              form.setValue(k, v as any)
+            }
+          }
+
+          // 2. Atualiza campos específicos (formato array — autocomplete etc.)
+          if (result.fieldUpdates) {
+            for (const upd of result.fieldUpdates) {
+              form.setValue(upd.field, upd.value as any)
+            }
+          }
+
+          // 3. Recarrega se o script pediu OU se a action tem reloadAfterAction
           if (result.reload || action.reloadAfterAction) {
             queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
             queryClient.invalidateQueries({ queryKey: ['entity-single', entityName] })
           }
+
+          // 4. Invalida entidades específicas retornadas pelo script
           for (const e of result.affectedEntities ?? []) {
             queryClient.invalidateQueries({ queryKey: ['entity', e] })
           }
-          if (result.formUpdates) {
-            for (const [k, v] of Object.entries(result.formUpdates)) {
-              form.setValue(k, v)
+
+          // 5. Redireciona se pedido
+          if (result.redirect) {
+            const go = () => {
+              if (result.redirect!.url) navigate(result.redirect!.url)
+              else if (result.redirect!.action === 'back') navigate(-1)
             }
+            result.redirect.delay ? setTimeout(go, result.redirect.delay) : go()
+          }
+
+          // 6. Abre um objeto (modal/inline) se pedido
+          if (result.openModal) {
+            const { objectId, action: modalAction, searchParams } = result.openModal
+            setObjectState(objectId, {
+              mode: (modalAction ?? 'edit') as 'create' | 'edit' | 'detail',
+              queryParams: searchParams ?? {},
+              selectedRow: searchParams ?? null,
+            })
           }
         })
         .catch((err: unknown) => {
@@ -410,7 +471,7 @@ export function CrudObject({ objectDef }: Props) {
         })
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [objectDef.entity],
+    [objectDef.id, entityName, resolvedMode],
   )
 
   // Handler de ação customizada
