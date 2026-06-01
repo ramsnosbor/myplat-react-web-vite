@@ -1,10 +1,18 @@
 // Resposta genérica de listagem de entidade
 export interface EntityListResponse<T = EntityRecord> {
   data: T[]
+  // Paginação — campos reais da API
+  totalElements?: number  // total de registros
+  totalPages?: number     // total de páginas
+  pageNumber?: number     // página atual (1-based)
+  pageSize?: number       // tamanho da página
+  first?: boolean         // é a primeira página?
+  last?: boolean          // é a última página?
+  // Aliases legacy (outros backends)
   total?: number
+  totalRecords?: number
+  count?: number
   page?: number
-  pageSize?: number
-  totalPages?: number
 }
 
 // Registro genérico de entidade (chave-valor)
@@ -14,6 +22,8 @@ export type EntityRecord = Record<string, unknown>
 export interface EntityMutationResponse<T = EntityRecord> {
   data: T
   message?: string
+  /** PK da entidade extraída do schema retornado pelo servidor (entities[0].config.primary) */
+  primary?: string
 }
 
 // Resposta de execução de script

@@ -250,9 +250,14 @@ export function CrudObject({ objectDef }: Props) {
       if (after === 'edit') {
         if (isCreate) {
           // Após CREATE com afterSubmit:'edit':
-          // Usa o schema da entidade (pré-carregado) para descobrir a PK real.
-          // objectDef.primaryKey sobrescreve se definido explicitamente no JSON.
-          const primary = objectDef.primaryKey ?? entitySchema?.config?.primary
+          // Prioridade da PK:
+          //   1. objectDef.primaryKey (explícito no JSON)
+          //   2. result.primary       (vem no retorno do POST: entities[0].config.primary)
+          //   3. entitySchema?.config.primary  (schema pré-carregado como fallback)
+          const primary =
+            objectDef.primaryKey ??
+            result.primary ??
+            entitySchema?.config?.primary
 
           if (!primary) {
             toast.error(

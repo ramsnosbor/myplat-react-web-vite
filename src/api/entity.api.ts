@@ -19,6 +19,15 @@ export interface EntitySchemaResponse {
   }
 }
 
+/** Formato de resposta do servidor para POST/PATCH */
+interface ServerMutationPayload<T> {
+  /** Registros afetados — o criado/atualizado está em data[0] */
+  data: T[]
+  /** Schema da entidade incluído no retorno (contém config.primary) */
+  entities?: Array<{ entity: string; config: { primary: string; [k: string]: unknown } }>
+  message?: string
+}
+
 export const entityApi = {
   /** Lista registros: GET /default/{entity}?pageNumber=1&pageSize=10&... */
   getList<T = EntityRecord>(
@@ -58,8 +67,8 @@ export const entityApi = {
     data: Record<string, unknown>,
   ): Promise<EntityMutationResponse<T>> {
     return apiClient
-      .post<EntityMutationResponse<T>>(`/default/${entity}`, data)
-      .then((r) => r.data)
+      .post<ServerMutationPayload<T> | EntityMutationResponse<T>>(`/default/${entity}`, data)
+      .then((r) => normalizeMutationResponse<T>(r.data))
   },
 
   /** Atualiza: PATCH /default/{entity}  — a chave primária vai no body, não na URL */
@@ -68,8 +77,8 @@ export const entityApi = {
     data: Record<string, unknown>,
   ): Promise<EntityMutationResponse<T>> {
     return apiClient
-      .patch<EntityMutationResponse<T>>(`/default/${entity}`, data)
-      .then((r) => r.data)
+      .patch<ServerMutationPayload<T> | EntityMutationResponse<T>>(`/default/${entity}`, data)
+      .then((r) => normalizeMutationResponse<T>(r.data))
   },
 
   /** Remove: DELETE /default/{entity}/{id} */
@@ -81,12 +90,13 @@ export const entityApi = {
 
   /**
    * Schema da entidade: GET /entities/{entity}
-   * Retorna config.primary com o nome do campo PK.
+   * Servidor retorna { entities: [{ entity, config: { primary, ... } }], data: [...] }
+   * Retorna o primeiro item de entities (o schema da entidade solicitada).
    */
-  getSchema(entity: string): Promise<EntitySchemaResponse> {
+  getSchema(entity: string): Promise<EntitySchemaResponse | undefined> {
     return apiClient
-      .get<EntitySchemaResponse>(`/entities/${entity}`)
-      .then((r) => r.data)
+      .get<{ entities: EntitySchemaResponse[]; data?: unknown[] }>(`/entities/${entity}`)
+      .then((r) => r.data.entities?.[0])
   },
 
   /**
@@ -111,4 +121,25 @@ export const entityApi = {
         URL.revokeObjectURL(url)
       })
   },
+}
+
+// ─── Normalização de resposta POST/PATCH ──────────────────────────────────────
+// O servidor pode retornar dois formatos:
+//   Novo:    { entities: [{config:{primary}}], data: [T] }   → data[0] é o registro
+//   Legado:  { data: T, message?: string }                   → data é o registro direto
+function normalizeMutationResponse<T>(
+  payload: ServerMutationPayload<T> | EntityMutationResponse<T>,
+): EntityMutationResponse<T> {
+  const p = payload as Record<string, unknown>
+
+  if (Array.isArray(p.data)) {
+    // Formato novo: extrai data[0] e primary do schema
+    const entities = p.entities as ServerMutationPayload<T>['entities']
+    const primary = entities?.[0]?.config?.primary
+    const record = (p.data as T[])[0]
+    return { data: record, primary, message: p.message as string | undefined }
+  }
+
+  // Formato legado: devolve como está
+  return payload as EntityMutationResponse<T>
 }
