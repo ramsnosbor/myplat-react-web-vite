@@ -213,7 +213,7 @@ function ModuleFlyout({
   module: ModuleDefinition
   onClose: () => void
 }) {
-  const groups = buildMenuGroups(module.menus ?? [])
+  const tree = buildMenuTree(module.menus ?? [])
   const [showScrollHint, setShowScrollHint] = useState(false)
   const contentRef = useRef<HTMLDivElement | null>(null)
 
@@ -227,7 +227,7 @@ function ModuleFlyout({
     updateScrollHint()
     window.addEventListener('resize', updateScrollHint)
     return () => window.removeEventListener('resize', updateScrollHint)
-  }, [module.idModulo, groups.length])
+  }, [module.idModulo, tree.length])
 
   return (
     <div className="fixed inset-0 z-40" onClick={onClose}>
@@ -262,12 +262,14 @@ function ModuleFlyout({
           onScroll={updateScrollHint}
           className="flex-1 overflow-y-auto overscroll-contain scroll-smooth py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {groups.length === 0 ? (
+          {tree.length === 0 ? (
             <p className="px-4 py-3 text-sm text-slate-500">Nenhum menu disponivel.</p>
           ) : (
-            groups.map((group, i) => (
-              <FlyoutMenuGroup key={i} group={group} onNavigate={onClose} />
-            ))
+            <div className="space-y-0.5 py-1">
+              {tree.map((node) => (
+                <MenuTreeNodeView key={node.item.idMenu} node={node} depth={0} onNavigate={onClose} />
+              ))}
+            </div>
           )}
         </div>
 
@@ -281,81 +283,123 @@ function ModuleFlyout({
   )
 }
 
-interface MenuGroup {
-  label?: string
-  items: MenuItemDefinition[]
+// ─── Árvore de menu ───────────────────────────────────────────────────────────
+
+interface MenuTreeNode {
+  item: MenuItemDefinition
+  children: MenuTreeNode[]
 }
 
-function buildMenuGroups(menus: MenuItemDefinition[]): MenuGroup[] {
+/**
+ * Constrói árvore n-ária a partir de lista plana.
+ * Raízes = itens sem parentmenu OU cujo parentmenu não existe como label de outro item.
+ * Filhos = itens cujo parentmenu === label do pai.
+ * Suporte a profundidade ilimitada.
+ */
+function buildMenuTree(menus: MenuItemDefinition[]): MenuTreeNode[] {
   const sorted = [...menus].sort((a, b) => (a.orderview ?? 0) - (b.orderview ?? 0))
-  const leaves = sorted.filter((m) => isLeaf(m))
-  const groups: MenuGroup[] = []
-  const parentLabels = Array.from(
-    new Set(leaves.filter((m) => m.parentmenu).map((m) => m.parentmenu!)),
-  )
-  const rootItems = leaves.filter((m) => !m.parentmenu)
+  const labelSet = new Set(sorted.map((m) => m.label))
 
-  if (rootItems.length > 0) groups.push({ items: rootItems })
-  for (const label of parentLabels) {
-    const items = leaves.filter((m) => m.parentmenu === label)
-    if (items.length > 0) groups.push({ label, items })
+  // Raízes: sem parentmenu ou parentmenu não bate com nenhum label existente
+  const roots = sorted.filter((m) => !m.parentmenu || !labelSet.has(m.parentmenu))
+
+  function buildNode(item: MenuItemDefinition, visited: Set<number>): MenuTreeNode {
+    if (visited.has(item.idMenu)) return { item, children: [] } // guarda circular
+    const next = new Set(visited)
+    next.add(item.idMenu)
+    const children = sorted
+      .filter((m) => m.parentmenu === item.label)
+      .map((child) => buildNode(child, next))
+    return { item, children }
   }
 
-  return groups
+  return roots.map((item) => buildNode(item, new Set()))
 }
 
-function FlyoutMenuGroup({
-  group,
+// ─── Nó recursivo do menu ─────────────────────────────────────────────────────
+
+function MenuTreeNodeView({
+  node,
+  depth = 0,
   onNavigate,
 }: {
-  group: MenuGroup
+  node: MenuTreeNode
+  depth?: number
   onNavigate: () => void
 }) {
   const [open, setOpen] = useState(false)
+  const { item, children } = node
+  const hasChildren = children.length > 0
+  const isRoot = depth === 0
 
-  if (!group.label) {
+  if (hasChildren) {
     return (
-      <div className="space-y-1 px-2">
-        {group.items.map((item) => (
-          <FlyoutMenuItem key={item.idMenu} item={item} onNavigate={onNavigate} />
-        ))}
+      <div className={isRoot ? 'mx-2 mb-1' : 'mb-0.5'}>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          style={!isRoot ? { paddingLeft: `${8 + depth * 8}px` } : undefined}
+          className={[
+            'flex w-full items-center justify-between rounded-md px-3 py-2 transition-colors',
+            isRoot
+              ? `text-xs font-semibold uppercase tracking-wide ${
+                  open
+                    ? 'bg-blue-50/80 text-blue-800 ring-1 ring-blue-100'
+                    : 'text-slate-500 hover:bg-blue-50 hover:text-blue-700'
+                }`
+              : `text-sm font-medium ${
+                  open ? 'text-blue-700' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-700'
+                }`,
+          ].join(' ')}
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            {item.icon && <i className={`${item.icon} shrink-0 text-base`} aria-hidden />}
+            <span className="truncate">{item.label}</span>
+          </div>
+          <i
+            className={`bi bi-chevron-down shrink-0 text-xs transition-transform ${open ? '' : '-rotate-90'}`}
+            aria-hidden
+          />
+        </button>
+
+        {open && (
+          <div
+            className={
+              isRoot
+                ? 'mt-0.5 rounded-md bg-blue-50/50 pb-1.5 ring-1 ring-blue-100'
+                : ''
+            }
+          >
+            {children.map((child) => (
+              <MenuTreeNodeView
+                key={child.item.idMenu}
+                node={child}
+                depth={depth + 1}
+                onNavigate={onNavigate}
+              />
+            ))}
+          </div>
+        )}
       </div>
     )
   }
 
-  return (
-    <div className={['mx-2 mb-2 rounded-md transition-colors', open ? 'bg-blue-50/80 ring-1 ring-blue-100' : ''].join(' ')}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className={[
-          'flex w-full items-center justify-between rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wide transition-colors',
-          open ? 'text-blue-800' : 'text-slate-500 hover:bg-blue-50 hover:text-blue-700',
-        ].join(' ')}
-      >
-        <span className="truncate">{group.label}</span>
-        <i
-          className={`bi bi-chevron-down shrink-0 text-xs transition-transform ${open ? '' : '-rotate-90'}`}
-          aria-hidden
-        />
-      </button>
+  // Folha navegável
+  if (isLeaf(item)) {
+    return <FlyoutMenuItem item={item} depth={depth} onNavigate={onNavigate} />
+  }
 
-      {open && (
-        <div className="space-y-1 px-2 pb-2">
-          {group.items.map((item) => (
-            <FlyoutMenuItem key={item.idMenu} item={item} onNavigate={onNavigate} />
-          ))}
-        </div>
-      )}
-    </div>
-  )
+  // Pai sem filhos e sem URL — oculta
+  return null
 }
 
 function FlyoutMenuItem({
   item,
+  depth = 0,
   onNavigate,
 }: {
   item: MenuItemDefinition
+  depth?: number
   onNavigate: () => void
 }) {
   const navigate = useNavigate()
@@ -394,6 +438,7 @@ function FlyoutMenuItem({
     <button
       type="button"
       onClick={handleClick}
+      style={depth > 0 ? { paddingLeft: `${12 + depth * 8}px` } : undefined}
       className={[
         'group relative flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors',
         isActive
