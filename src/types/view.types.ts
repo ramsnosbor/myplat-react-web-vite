@@ -42,6 +42,7 @@ export interface RawViewResponse {
     entities?: EntityNode[]
     connections?: Connection[]
     navbars?: any[]
+    parameters?: ParameterDef[]
   }
 }
 

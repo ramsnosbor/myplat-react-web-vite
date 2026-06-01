@@ -22,7 +22,10 @@ function fetchParam(name: string): Promise<string | null> {
       name,
       parameterApi
         .getConfig({ cdParameter: name, orderBy: 'id,asc' })
-        .then((r) => (r.table?.[0] as Record<string, unknown>)?.vlParameter as string ?? null)
+        .then((r) => {
+          const val = r.table?.[0]?.vlParameter
+          return val !== undefined && val !== null ? String(val) : null
+        })
         .catch(() => null),
     )
   }
@@ -240,11 +243,20 @@ function NavbarSection({
 // object é dynamic e ainda não foi ativado — eliminando o espaço vazio.
 
 function ObjectSlot({ objectDef }: { objectDef: ObjectDefinition }) {
-  const { viewStore } = useViewContext()
+  const { viewStore, screenParams, initialParams = {} } = useViewContext()
   const objectMode = useStore(viewStore, (s) => s.objects[objectDef.id]?.mode ?? null)
 
   // dynamic sem mode → nem renderiza o wrapper (zero espaço no grid)
   if (objectDef.dynamic && !objectMode) return null
+
+  // Avalia visible usando screenParams (parâmetros SSO) + initialParams (URL)
+  if (objectDef.visible !== undefined && objectDef.visible !== null) {
+    const ctx = { ...screenParams, ...initialParams }
+    const result = evalExpr(String(objectDef.visible), ctx)
+    if (result === false || result === 0 || result === '' || result === null || result === undefined) {
+      return null
+    }
+  }
 
   return (
     <div className={resolveColClass(objectDef.class)}>
