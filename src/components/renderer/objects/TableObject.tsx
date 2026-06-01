@@ -10,6 +10,7 @@ import { scriptApi } from '@/api/script.api'
 import { useToast } from '@/components/ui/Toast'
 import type { ObjectDefinition, ComponentDefinition, ComponentAction } from '@/types/view.types'
 import { interpolate } from '@/utils/interpolate'
+import { evalExpr } from '@/utils/evalExpr'
 import type { EntityListResponse, EntityRecord } from '@/types/entity.types'
 
 interface Props {
@@ -726,6 +727,32 @@ function SortIcon({ sorted, dir }: { sorted: boolean; dir: 'asc' | 'desc' }) {
 
 // ─── ActionButton ─────────────────────────────────────────────────────────────
 
+/**
+ * Avalia a propriedade `visible` de uma action contra os dados da linha.
+ *
+ * Suporta três formatos:
+ *   "id_status=0"          → legado sem {{}}, = simples (converte para ==)
+ *   "{{id_status}}=0"      → com {{}} e = simples (converte para ==)
+ *   "{{id_status}}===0"    → expressão JS completa via evalExpr
+ */
+function isActionVisible(visible: string | boolean | undefined, row: EntityRecord): boolean {
+  if (visible === undefined || visible === null) return true
+  if (typeof visible === 'boolean') return visible
+
+  let expr = String(visible).trim()
+
+  // Sem {{}} → formato legado "campo=valor": envolve o campo com {{}}
+  if (!expr.includes('{{')) {
+    expr = expr.replace(/^([a-zA-Z_]\w*)\s*=([^=<>!].*)$/, '{{$1}}==$2')
+  } else {
+    // Com {{}} mas = simples isolado (não parte de ==, !=, <=, >=) → normaliza para ==
+    expr = expr.replace(/\}\}\s*=(?![=])/g, '}}==')
+  }
+
+  const result = evalExpr(expr, row as Record<string, unknown>)
+  return result !== false && result !== 0 && result !== '' && result !== null && result !== undefined
+}
+
 interface ActionButtonProps {
   action: ComponentAction
   row: EntityRecord
@@ -772,6 +799,8 @@ function actionVariantClass(variant: string | undefined, actionType: string): st
 }
 
 function ActionButton({ action, row, onAction }: ActionButtonProps) {
+  if (!isActionVisible(action.visible, row)) return null
+
   const iconClass    = resolveIconClass(action.icon, action.action)
   const variantClass = actionVariantClass(action.variant, action.action)
   const label        = action.title ?? action.name ?? ''
