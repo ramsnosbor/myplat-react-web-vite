@@ -31,6 +31,14 @@ export function CrudObject({ objectDef }: Props) {
   const queryClient = useQueryClient()
   const toast = useToast()
 
+  // Mapa id→entity: nos objetos/componentes "entity" guarda o entities[].id,
+  // mas a API recebe o entities[].entity (que pode diferir do id).
+  const entityMap: Record<string, string> = {}
+  for (const e of definition.entities) {
+    entityMap[e.id] = e.entity ?? e.id
+  }
+  const entityName = entityMap[objectDef.entity] ?? objectDef.entity
+
   const connectionParams = useConnectionParams(objectDef.id)
 
   const qp = objectState?.queryParams
@@ -87,16 +95,16 @@ export function CrudObject({ objectDef }: Props) {
   // Carrega o registro usando os params da action como filtro:
   // GET /default/{entity}?{...loadFilter}&pageSize=1
   const { data: record, isLoading: isLoadingRecord } = useQuery({
-    queryKey: ['entity-single', objectDef.entity, JSON.stringify(loadFilter)],
+    queryKey: ['entity-single', entityName, JSON.stringify(loadFilter)],
     queryFn: async () => {
-      const res = await entityApi.getList<EntityRecord>(objectDef.entity, {
+      const res = await entityApi.getList<EntityRecord>(entityName, {
         ...loadFilter,
         pageSize: 1,
       })
       const rows = (res as { data?: EntityRecord[] }).data ?? (Array.isArray(res) ? res as EntityRecord[] : [])
       return rows[0] as EntityRecord | undefined
     },
-    enabled: !!entityId && !!objectDef.entity && !isCreate,
+    enabled: !!entityId && !!entityName && !isCreate,
     staleTime: 30_000,
   })
 
@@ -163,10 +171,10 @@ export function CrudObject({ objectDef }: Props) {
   const mutation = useMutation({
     mutationFn: async (values: Record<string, unknown>) => {
       if (isCreate) {
-        return entityApi.create(objectDef.entity, values)
+        return entityApi.create(entityName, values)
       } else {
         // A chave primária vai sempre no body — a URL não leva ID
-        return entityApi.update(objectDef.entity, {
+        return entityApi.update(entityName, {
           [entityIdField]: entityId,
           ...values,
         })
@@ -174,7 +182,7 @@ export function CrudObject({ objectDef }: Props) {
     },
     onSuccess: (result) => {
       // Invalida queries da entidade para forçar reload em tabelas filhas
-      queryClient.invalidateQueries({ queryKey: ['entity', objectDef.entity] })
+      queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
 
       // Invalida entidades de objetos irmãos (filhos do mesmo pai na connection).
       // Ex: salvar CRUDPessoaEndereco (entity: pessoa_endereco) também invalida
@@ -186,8 +194,11 @@ export function CrudObject({ objectDef }: Props) {
         )
         for (const sib of siblings) {
           const sibObj = definition.objects.find((o) => o.id === sib.child)
-          if (sibObj?.entity && sibObj.entity !== objectDef.entity) {
-            queryClient.invalidateQueries({ queryKey: ['entity', sibObj.entity] })
+          if (sibObj?.entity) {
+            const sibEntityName = entityMap[sibObj.entity] ?? sibObj.entity
+            if (sibEntityName !== entityName) {
+              queryClient.invalidateQueries({ queryKey: ['entity', sibEntityName] })
+            }
           }
         }
       }
@@ -207,7 +218,7 @@ export function CrudObject({ objectDef }: Props) {
           scriptApi.execute(hook.name, { ...newRecord })
             .then((res) => {
               if (res.messageError) toast.error(res.messageError)
-              if (res.reload) queryClient.invalidateQueries({ queryKey: ['entity', objectDef.entity] })
+              if (res.reload) queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
               for (const e of res.affectedEntities ?? []) {
                 queryClient.invalidateQueries({ queryKey: ['entity', e] })
               }
@@ -325,8 +336,8 @@ export function CrudObject({ objectDef }: Props) {
           else if (result.message) toast.success(result.message)
           // Recarrega se o script pediu OU se a action tem reloadAfterAction
           if (result.reload || action.reloadAfterAction) {
-            queryClient.invalidateQueries({ queryKey: ['entity', objectDef.entity] })
-            queryClient.invalidateQueries({ queryKey: ['entity-single', objectDef.entity] })
+            queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
+            queryClient.invalidateQueries({ queryKey: ['entity-single', entityName] })
           }
           for (const e of result.affectedEntities ?? []) {
             queryClient.invalidateQueries({ queryKey: ['entity', e] })
@@ -402,8 +413,8 @@ export function CrudObject({ objectDef }: Props) {
           break
         case 'delete':
           if (entityId && window.confirm(action.confirmation ?? 'Confirmar exclusão?')) {
-            entityApi.remove(objectDef.entity, entityId).then(() => {
-              queryClient.invalidateQueries({ queryKey: ['entity', objectDef.entity] })
+            entityApi.remove(entityName, entityId).then(() => {
+              queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
               form.reset(buildDefaultValues(objectDef, initialParams))
               setObjectState(objectDef.id, { mode: 'create', formData: null, selectedRow: null })
             })
@@ -423,7 +434,7 @@ export function CrudObject({ objectDef }: Props) {
             .then(() => {
               toast.success('Ação executada com sucesso.')
               if (action.reloadAfterAction) {
-                queryClient.invalidateQueries({ queryKey: ['entity', objectDef.entity] })
+                queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
               }
             })
             .catch((err: unknown) => {
@@ -477,8 +488,8 @@ export function CrudObject({ objectDef }: Props) {
           break
         }
         case 'reload': {
-          queryClient.invalidateQueries({ queryKey: ['entity', objectDef.entity] })
-          queryClient.invalidateQueries({ queryKey: ['entity-single', objectDef.entity] })
+          queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
+          queryClient.invalidateQueries({ queryKey: ['entity-single', entityName] })
           break
         }
         case 'updateConnections': {
