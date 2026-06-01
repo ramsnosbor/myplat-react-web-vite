@@ -689,10 +689,14 @@ export function CrudObject({ objectDef }: Props) {
     return true
   })
 
+  // Botões de salvar: só em create/edit, nunca em detail
   const showStandardButtons =
     objectDef.showSaveButtons !== false &&
     objectDef.hideButtons !== true &&
     !isDetail
+
+  // Voltar: visível em qualquer modo (create, edit, detail)
+  const showBackButton = objectDef.showBackButton !== false && objectDef.hideButtons !== true
 
   return (
     <div style={objectDef.style as React.CSSProperties}>
@@ -733,12 +737,13 @@ export function CrudObject({ objectDef }: Props) {
           </div>
 
           {/* Área de botões — form + crudActions juntos, posição via crudActionsPosition */}
-          {(showStandardButtons || visibleActions.length > 0) && (
+          {(showStandardButtons || showBackButton || visibleActions.length > 0) && (
             <ButtonArea
               position={objectDef.crudActionsPosition}
-              formButtons={showStandardButtons ? (
+              formButtons={(showStandardButtons || showBackButton) ? (
                 <>
-                  {objectDef.showBackButton !== false && (
+                  {/* Voltar: sempre visível (create, edit, detail) */}
+                  {showBackButton && (
                     <button
                       type="button"
                       onClick={() => navigate(-1)}
@@ -747,17 +752,20 @@ export function CrudObject({ objectDef }: Props) {
                       {objectDef.backButtonName ?? 'Voltar'}
                     </button>
                   )}
-                  <button
-                    type="submit"
-                    disabled={mutation.isPending}
-                    className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                  >
-                    {mutation.isPending
-                      ? 'Salvando...'
-                      : isCreate
-                        ? (objectDef.createButtonName ?? 'Criar')
-                        : (objectDef.updateButtonName ?? 'Salvar')}
-                  </button>
+                  {/* Salvar/Criar: só em create e edit */}
+                  {showStandardButtons && (
+                    <button
+                      type="submit"
+                      disabled={mutation.isPending}
+                      className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    >
+                      {mutation.isPending
+                        ? 'Salvando...'
+                        : isCreate
+                          ? (objectDef.createButtonName ?? 'Criar')
+                          : (objectDef.updateButtonName ?? 'Salvar')}
+                    </button>
+                  )}
                 </>
               ) : null}
               crudActions={visibleActions.length > 0 ? (
