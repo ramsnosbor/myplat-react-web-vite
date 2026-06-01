@@ -510,7 +510,7 @@ export function TableObject({ objectDef }: Props) {
                         })}
                         {actionColumns.length > 0 && (
                           <td className="px-3 py-2">
-                            <div className="flex justify-end gap-1">
+                            <div className="flex flex-col items-end gap-1">
                               {actionColumns.flatMap((col) =>
                                 (col.actions ?? []).map((action, ai) => (
                                   <ActionButton
