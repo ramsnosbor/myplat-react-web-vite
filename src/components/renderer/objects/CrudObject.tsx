@@ -701,7 +701,7 @@ export function CrudObject({ objectDef }: Props) {
                     <button
                       type="button"
                       onClick={() => navigate(-1)}
-                      className="rounded-md border border-border px-4 py-1.5 text-sm text-muted-foreground hover:bg-accent transition-colors"
+                      className="rounded-md border border-border px-4 py-1.5 text-sm text-muted-foreground hover:bg-accent transition-colors cursor-pointer"
                     >
                       {objectDef.backButtonName ?? 'Voltar'}
                     </button>
@@ -709,7 +709,7 @@ export function CrudObject({ objectDef }: Props) {
                   <button
                     type="submit"
                     disabled={mutation.isPending}
-                    className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                    className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
                   >
                     {mutation.isPending
                       ? 'Salvando...'
@@ -796,7 +796,7 @@ function CrudActionButton({ action, isPending, isSubmitAction, onClick }: CrudAc
   // normaliza "btn-primary" → "primary"
   const variant = rawVariant.replace(/^btn-/, '')
 
-  const baseClass = 'rounded-md px-4 py-1.5 text-sm font-medium transition-colors disabled:opacity-50'
+  const baseClass = 'rounded-md px-4 py-1.5 text-sm font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed'
   const variantClass =
     variant === 'primary'
       ? 'bg-primary text-primary-foreground hover:bg-primary/90'

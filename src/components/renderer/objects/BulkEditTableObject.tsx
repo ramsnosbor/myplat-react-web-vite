@@ -581,7 +581,7 @@ export function BulkEditTableObject({ objectDef }: Props) {
                                   title={act.tooltip ?? act.title ?? act.name ?? act.action}
                                   onClick={(e) => { e.stopPropagation(); handleRowAction(act, row) }}
                                   disabled={isDeleted}
-                                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-40"
+                                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors cursor-pointer text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed"
                                   style={act.style as React.CSSProperties}
                                 >
                                   {act.icon && <i className={act.icon.startsWith('bi') ? act.icon : `bi bi-${act.icon}`} />}
@@ -679,7 +679,7 @@ export function BulkEditTableObject({ objectDef }: Props) {
                                   title={act.tooltip ?? act.title ?? act.name ?? act.action}
                                   onClick={() => handleRowAction(act, row)}
                                   disabled={isDeleted}
-                                  className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs transition-colors text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-40"
+                                  className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs transition-colors cursor-pointer text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed"
                                   style={act.style as React.CSSProperties}>
                                   {act.icon && <i className={act.icon.startsWith('bi') ? act.icon : `bi bi-${act.icon}`} />}
                                   {act.title ?? act.name}

@@ -785,7 +785,7 @@ function ActionButton({ action, row, onAction }: ActionButtonProps) {
         e.stopPropagation()
         onAction(action, row)
       }}
-      className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs transition-colors ${variantClass}`}
+      className={`inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs transition-colors cursor-pointer disabled:cursor-not-allowed ${variantClass}`}
       style={action.style as React.CSSProperties}
     >
       {iconClass && <i className={iconClass} aria-hidden="true" />}
