@@ -1,12 +1,14 @@
 import { useMemo } from 'react'
 import { useStore } from 'zustand'
-import { useViewContext } from './ViewRenderer'
+import { useViewContext } from './ViewContext'
 import type { ObjectDefinition, Connection } from '@/types/view.types'
-
-// Importações dos tipos de object (serão criados progressivamente)
-// import { TableObject } from './objects/TableObject'
-// import { FilterObject } from './objects/FilterObject'
-// import { CrudObject } from './objects/CrudObject'
+import { TableObject } from './objects/TableObject'
+import { FilterObject } from './objects/FilterObject'
+import { CrudObject } from './objects/CrudObject'
+import { PanelObject } from './objects/PanelObject'
+import { ChartObject } from './objects/ChartObject'
+import { GridObject } from './objects/GridObject'
+import { BulkEditTableObject } from './objects/BulkEditTableObject'
 
 // ─── Hook: calcula params do filho a partir do estado do pai ─────────────────
 
@@ -21,7 +23,7 @@ import type { ObjectDefinition, Connection } from '@/types/view.types'
  * Quando o pai muda → useMemo recalcula → queryKey do filho muda → TanStack refaz a query.
  */
 export function useConnectionParams(objectId: string): Record<string, unknown> {
-  const { connections, viewStore } = useViewContext()
+  const { connections, viewStore, definition } = useViewContext()
 
   // Encontra a connection onde este object é filho
   const connection: Connection | undefined = connections.find(
@@ -36,36 +38,79 @@ export function useConnectionParams(objectId: string): Record<string, unknown> {
   return useMemo(() => {
     if (!connection || !parentState) return {}
 
+    // Campos declarados nos componentes do pai — distingue referências de literais.
+    // Se parentKey é um campo real do pai → referência dinâmica.
+    // Se não existe nos componentes → valor literal estático (ex: "Financeiro").
+    const parentObj = definition.objects.find((o) => o.id === connection.parent)
+    const parentFieldNames = new Set(
+      (parentObj?.components ?? []).flatMap((c) =>
+        [c.nameForm, c.name].filter(Boolean) as string[],
+      ),
+    )
+
     const params: Record<string, unknown> = {}
     for (const [childKey, parentKey] of Object.entries(connection.keys)) {
-      const value =
+      const fieldValue =
         parentState.selectedRow?.[parentKey] ??
         parentState.formData?.[parentKey] ??
         parentState.queryParams?.[parentKey]
 
-      if (value !== undefined && value !== null && value !== '') {
-        params[childKey] = value
+      if (fieldValue !== undefined && fieldValue !== null && fieldValue !== '') {
+        // Valor encontrado no estado do pai → usa
+        params[childKey] = fieldValue
+      } else if (!parentFieldNames.has(parentKey)) {
+        // parentKey NÃO é campo do pai → valor literal estático
+        // Ex: { "origem": "Financeiro" } → params.origem = "Financeiro"
+        params[childKey] = parentKey
       }
+      // parentKey É campo do pai mas sem valor → omite (pai ainda não tem o ID)
     }
     return params
-  }, [connection, parentState])
+  }, [connection, parentState, definition])
 }
 
 /**
  * Verifica se o filho tem todos os params obrigatórios para fazer a query.
- * Se a connection exige dados do pai mas não há pai ou o pai não tem dados,
- * retorna false e o TanStack Query não executa a query (enabled: false).
+ * Distingue referências de campos (parentKey existe nos componentes do pai)
+ * de valores literais (não existe nos componentes → sempre habilitado).
  */
 export function useConnectionEnabled(objectId: string): boolean {
-  const { connections } = useViewContext()
+  const { connections, viewStore, definition } = useViewContext()
   const connection = connections.find((c) => c.child === objectId)
-  const params = useConnectionParams(objectId)
+  const parentState = useStore(viewStore, (s) =>
+    connection ? s.objects[connection.parent] : null,
+  )
 
   if (!connection) return true // sem connection → sempre habilitado
 
-  // Deve ter ao menos um dos campos do connection preenchido
-  const requiredKeys = Object.keys(connection.keys)
-  return requiredKeys.some((k) => params[k] !== undefined)
+  // Campos declarados nos componentes do pai
+  const parentObj = definition.objects.find((o) => o.id === connection.parent)
+  const parentFieldNames = new Set(
+    (parentObj?.components ?? []).flatMap((c) =>
+      [c.nameForm, c.name].filter(Boolean) as string[],
+    ),
+  )
+
+  // Chaves que são referências a campos do pai (não literais)
+  const fieldRefKeys = Object.entries(connection.keys).filter(([, parentKey]) =>
+    parentFieldNames.has(parentKey),
+  )
+
+  if (fieldRefKeys.length === 0) {
+    // Todas as chaves são literais → sempre habilitado
+    return true
+  }
+
+  // Tem referências de campo → habilita somente quando ao menos uma tem valor no pai
+  const dynamicEntries = fieldRefKeys.filter(([, parentKey]) => {
+    const v =
+      parentState?.selectedRow?.[parentKey] ??
+      parentState?.formData?.[parentKey] ??
+      parentState?.queryParams?.[parentKey]
+    return v !== undefined && v !== null && v !== ''
+  })
+
+  return dynamicEntries.length > 0
 }
 
 // ─── ObjectRenderer ───────────────────────────────────────────────────────────
@@ -75,17 +120,34 @@ interface ObjectRendererProps {
 }
 
 export function ObjectRenderer({ objectDef }: ObjectRendererProps) {
+  const { viewStore } = useViewContext()
+
+  // Lê o mode do viewStore para controlar visibilidade de objetos dinâmicos.
+  // O hook deve ser chamado antes de qualquer early return (regra dos hooks).
+  const objectMode = useStore(viewStore, (s) => s.objects[objectDef.id]?.mode ?? null)
+
+  // Sempre oculto: hidden=true no JSON
   if (objectDef.hidden) return null
+
+  // Objetos dinâmicos: o ObjectSlot (no ViewRenderer) já não renderiza o wrapper.
+  // Esta guarda cobre o caso de ObjectRenderer ser chamado diretamente (ex: dentro de ModalWrapper).
+  if (objectDef.dynamic && !objectMode) return null
 
   switch (objectDef.type) {
     case 'table':
-      return <TableObjectPlaceholder objectDef={objectDef} />
+      return <TableObject objectDef={objectDef} />
     case 'filter':
-      return <FilterObjectPlaceholder objectDef={objectDef} />
+      return <FilterObject objectDef={objectDef} />
     case 'crud':
-      return <CrudObjectPlaceholder objectDef={objectDef} />
+      return <CrudObject objectDef={objectDef} />
     case 'panel':
-      return <PanelObjectPlaceholder objectDef={objectDef} />
+      return <PanelObject objectDef={objectDef} />
+    case 'chart':
+      return <ChartObject objectDef={objectDef} />
+    case 'grid':
+      return <GridObject objectDef={objectDef} />
+    case 'bulkEditTable':
+      return <BulkEditTableObject objectDef={objectDef} />
     default:
       return (
         <div className="rounded-md border border-border p-4 text-sm text-muted-foreground">
@@ -95,64 +157,3 @@ export function ObjectRenderer({ objectDef }: ObjectRendererProps) {
   }
 }
 
-// ─── Placeholders (serão substituídos pelas implementações reais) ─────────────
-
-function TableObjectPlaceholder({ objectDef }: { objectDef: ObjectDefinition }) {
-  const connectionParams = useConnectionParams(objectDef.id)
-  const enabled = useConnectionEnabled(objectDef.id)
-
-  return (
-    <div className="rounded-md border border-border p-4">
-      <p className="text-sm font-medium">{objectDef.title ?? objectDef.id}</p>
-      <p className="text-xs text-muted-foreground mt-1">
-        Tabela | entity: <code className="font-mono">{objectDef.entity}</code>
-        {!enabled && ' | aguardando pai...'}
-      </p>
-      {Object.keys(connectionParams).length > 0 && (
-        <pre className="mt-2 rounded bg-muted px-2 py-1 text-xs">
-          {JSON.stringify(connectionParams, null, 2)}
-        </pre>
-      )}
-    </div>
-  )
-}
-
-function FilterObjectPlaceholder({ objectDef }: { objectDef: ObjectDefinition }) {
-  return (
-    <div className="rounded-md border border-border p-4">
-      <p className="text-sm font-medium">{objectDef.title ?? objectDef.id}</p>
-      <p className="text-xs text-muted-foreground mt-1">
-        Filtro | entity: <code className="font-mono">{objectDef.entity}</code>
-      </p>
-    </div>
-  )
-}
-
-function CrudObjectPlaceholder({ objectDef }: { objectDef: ObjectDefinition }) {
-  const connectionParams = useConnectionParams(objectDef.id)
-
-  return (
-    <div className="rounded-md border border-border p-4">
-      <p className="text-sm font-medium">{objectDef.title ?? objectDef.id}</p>
-      <p className="text-xs text-muted-foreground mt-1">
-        CRUD | entity: <code className="font-mono">{objectDef.entity}</code>
-      </p>
-      {Object.keys(connectionParams).length > 0 && (
-        <pre className="mt-2 rounded bg-muted px-2 py-1 text-xs">
-          {JSON.stringify(connectionParams, null, 2)}
-        </pre>
-      )}
-    </div>
-  )
-}
-
-function PanelObjectPlaceholder({ objectDef }: { objectDef: ObjectDefinition }) {
-  return (
-    <div className="rounded-md border border-border p-4">
-      <p className="text-sm font-medium">{objectDef.title ?? objectDef.id}</p>
-      <p className="text-xs text-muted-foreground mt-1">
-        Painel | entity: <code className="font-mono">{objectDef.entity}</code>
-      </p>
-    </div>
-  )
-}

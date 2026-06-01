@@ -238,21 +238,29 @@ export function CrudObject({ objectDef }: Props) {
       if (after === 'edit') {
         if (isCreate) {
           // Após CREATE com afterSubmit:'edit':
-          // Extrai a PK do registro criado para carregar o form em modo edição com o ID correto.
-          // Tenta objectDef.primaryKey, depois primeiro campo id_* do retorno, senão 'id'.
-          const pk =
-            objectDef.primaryKey ??
-            Object.keys(newRecord).find((k) => k.startsWith('id_')) ??
-            'id'
-          const pkValue = newRecord[pk]
+          // Monta queryParams com os campos que os filhos buscam no pai (parentKeys das connections).
+          // É mais confiável que tentar adivinhar a PK pelo nome — cada connection declara
+          // exatamente qual campo do pai ela precisa (ex: id_financeiro, id_pessoa).
+          const parentConnKeys = connections
+            .filter((c) => c.parent === objectDef.id)
+            .flatMap((c) => Object.values(c.keys))
+
+          // Fallback se não há connections: objectDef.primaryKey ou 'id'
+          const fallbackPk = objectDef.primaryKey ?? 'id'
+          const pkFields = parentConnKeys.length > 0 ? parentConnKeys : [fallbackPk]
+
+          const queryParamsForEdit: Record<string, unknown> = {}
+          for (const field of pkFields) {
+            const val = newRecord[field]
+            if (val !== undefined && val !== null) queryParamsForEdit[field] = val
+          }
 
           // Reseta o form imediatamente com os dados retornados (evita flash de campo vazio)
           form.reset({ ...buildDefaultValues(objectDef, initialParams), ...newRecord })
 
           setObjectState(objectDef.id, {
             mode: 'edit',
-            // queryParams com a PK faz o loadFilter encontrar o ID e habilitar a query
-            queryParams: pkValue !== undefined && pkValue !== null ? { [pk]: pkValue } : {},
+            queryParams: queryParamsForEdit,
             formData: newRecord,
             selectedRow: newRecord,
           })
