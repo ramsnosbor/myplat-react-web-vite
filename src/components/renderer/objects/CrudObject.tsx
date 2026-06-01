@@ -583,7 +583,7 @@ export function CrudObject({ objectDef }: Props) {
               position={objectDef.crudActionsPosition}
               formButtons={showStandardButtons ? (
                 <>
-                  {objectDef.showBackButton && (
+                  {objectDef.showBackButton !== false && (
                     <button
                       type="button"
                       onClick={() => navigate(-1)}
