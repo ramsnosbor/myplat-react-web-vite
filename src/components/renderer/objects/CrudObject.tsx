@@ -26,7 +26,7 @@ type CrudMode = 'create' | 'edit' | 'detail'
 
 export function CrudObject({ objectDef }: Props) {
   const navigate = useNavigate()
-  const { viewStore, initialParams = {}, connections, definition } = useViewContext()
+  const { viewStore, initialParams = {}, connections, definition, screenParams } = useViewContext()
   const objectState = useStore(viewStore, (s) => s.objects[objectDef.id])
   const setObjectState = useStore(viewStore, (s) => s.setObjectState)
   const queryClient = useQueryClient()
@@ -128,7 +128,9 @@ export function CrudObject({ objectDef }: Props) {
 
   // Calcula computedFrom SINCRONAMENTE durante o render — assim formValues já tem
   // os valores corretos antes dos filhos renderizarem (resolve visible dependente de computedFrom)
-  const rawFormValues = { ...initialParams, ...watchedValues }
+  // screenParams entra antes de initialParams/watchedValues para ter menor prioridade
+  // (o form sempre vence; parâmetros SSO servem de fallback/contexto)
+  const rawFormValues = { ...screenParams, ...initialParams, ...watchedValues }
   const computedOverrides: Record<string, unknown> = {}
   for (const comp of objectDef.components ?? []) {
     if (!comp.computedFrom) continue
@@ -445,7 +447,7 @@ export function CrudObject({ objectDef }: Props) {
         action: resolvedMode,      // 'create' | 'edit' | 'detail'
         bulkSelectedData: [],
         entities: {},
-        screenParams: {},
+        screenParams,
         customParams,
       }
 

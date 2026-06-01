@@ -38,7 +38,7 @@ const TABLE_HEIGHT_OPTIONS: Array<{
 ]
 
 export function TableObject({ objectDef }: Props) {
-  const { viewStore, connections, definition, initialParams } = useViewContext()
+  const { viewStore, connections, definition, initialParams, screenParams } = useViewContext()
   const objectState = useStore(viewStore, (s) => s.objects[objectDef.id])
   const setObjectState = useStore(viewStore, (s) => s.setObjectState)
   const queryClient = useQueryClient()

@@ -5,6 +5,15 @@ export interface ViewDefinition {
   connections: Connection[]
   navbars: Navbar[]
   objects: ObjectDefinition[]
+  /** Parâmetros SSO declarados na view — buscados via GET /parameters?cdParameter=name */
+  parameters?: ParameterDef[]
+}
+
+export interface ParameterDef {
+  /** Nome do parâmetro (cdParameter) */
+  name: string
+  /** Valor padrão caso o parâmetro não seja encontrado no SSO */
+  default?: string
 }
 
 // ─── Entity Node ─────────────────────────────────────────────────────────────
@@ -197,6 +206,7 @@ export interface SubmitAction {
   entity?: string
   /** saveMany: campo que identifica se é create (null/0) ou update */
   primaryKey?: string
+  params?: Record<string, unknown>
 }
 
 export interface CrudAction {
@@ -255,7 +265,7 @@ export type ComponentType =
   | 'text' | 'number' | 'decimal' | 'date' | 'select' | 'autocomplete'
   | 'switch' | 'checkbox' | 'textarea' | 'label' | 'title' | 'template'
   | 'file' | 'image' | 'richtext' | 'color' | 'mask' | 'range'
-  | 'chart' | 'pivot' | 'kanban' | 'monaco' | 'cep' | 'link' | 'button'
+  | 'chart' | 'pivot' | 'kanban' | 'monaco' | 'cep' | 'cpfCnpj' | 'phoneNumber' | 'email' | 'link' | 'button'
   | 'html' | 'hidden' | 'generalActions' | 'currency' | 'chipselect' | 'groupcheckbox' | 'linkpanel'
   | 'actions'
 

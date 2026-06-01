@@ -1,33 +1,43 @@
-import { useRef, createContext, useContext, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
+import { useStore } from 'zustand'
 import { viewsApi } from '@/api/views.api'
+import { parameterApi } from '@/api/parameter.api'
 import { createViewStore, type ViewStore } from '@/store/viewStore'
 import { ObjectRenderer } from './ObjectRenderer'
-import type { ViewDefinition, Navbar, Connection } from '@/types/view.types'
+import { useAuthStore } from '@/store/authStore'
+import { resolveColClass } from '@/utils/colClass'
+import { ViewContext, useViewContext } from './ViewContext'
+import { evalExpr } from '@/utils/evalExpr'
+import type { ViewDefinition, Navbar, ObjectDefinition } from '@/types/view.types'
 
-// ─── Contexto da view (viewStore + connections + definição) ───────────────────
-
-interface ViewContextValue {
-  viewStore: ViewStore
-  connections: Connection[]
-  definition: ViewDefinition
-}
-
-const ViewContext = createContext<ViewContextValue | null>(null)
-
-export function useViewContext() {
-  const ctx = useContext(ViewContext)
-  if (!ctx) throw new Error('useViewContext deve ser usado dentro de ViewRenderer')
-  return ctx
+// ─── Cache de parâmetros SSO ──────────────────────────────────────────────────
+// Evita múltiplas chamadas para o mesmo parâmetro quando há várias views
+// ou re-renders que disparam o mesmo fetch. Compartilhado entre instâncias.
+const _paramCache = new Map<string, Promise<string | null>>()
+function fetchParam(name: string): Promise<string | null> {
+  if (!_paramCache.has(name)) {
+    _paramCache.set(
+      name,
+      parameterApi
+        .getConfig({ cdParameter: name, orderBy: 'id,asc' })
+        .then((r) => (r.table?.[0] as Record<string, unknown>)?.vlParameter as string ?? null)
+        .catch(() => null),
+    )
+  }
+  return _paramCache.get(name)!
 }
 
 // ─── ViewRenderer ─────────────────────────────────────────────────────────────
 
 interface ViewRendererProps {
   screenName: string
+  /** Params iniciais do menu (ex: { tipo_nfe: "Saida" } de "listNfe?tipo_nfe=Saida") */
+  initialParams?: Record<string, unknown>
 }
 
-export function ViewRenderer({ screenName }: ViewRendererProps) {
+export function ViewRenderer({ screenName, initialParams }: ViewRendererProps) {
   // Store isolada por instância de view (não compartilhada globalmente)
   const storeRef = useRef<ViewStore | null>(null)
   if (!storeRef.current) {
@@ -40,6 +50,36 @@ export function ViewRenderer({ screenName }: ViewRendererProps) {
     staleTime: 5 * 60 * 1000, // 5 minutos de cache para a definição da view
   })
 
+  // ─── Parâmetros SSO ────────────────────────────────────────────────────────
+  // Busca os parâmetros declarados em definition.parameters[] via GET /parameters?cdParameter=name
+  // Disponíveis em formValues (como {{UTILIZA_PLANO_GERENCIAL}}) e nos payloads de script.
+  const [screenParams, setScreenParams] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    const paramDefs = definition?.parameters
+    if (!paramDefs || paramDefs.length === 0) {
+      setScreenParams({})
+      return
+    }
+    let cancelled = false
+    Promise.all(
+      paramDefs.map(async (def) => {
+        if (!def?.name) return [null, null] as const
+        const value = await fetchParam(def.name)
+        const resolved = value ?? def.default ?? undefined
+        return [def.name, resolved] as const
+      }),
+    ).then((entries) => {
+      if (cancelled) return
+      const result: Record<string, string> = {}
+      for (const [key, val] of entries) {
+        if (key && val !== undefined) result[key] = val
+      }
+      setScreenParams(result)
+    })
+    return () => { cancelled = true }
+  }, [definition?.parameters])
+
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -49,6 +89,10 @@ export function ViewRenderer({ screenName }: ViewRendererProps) {
   }
 
   if (error || !definition) {
+    // Tela "home" sem view configurada → tela de boas-vindas
+    if (screenName === 'home') {
+      return <HomeScreen />
+    }
     return (
       <div className="flex h-full items-center justify-center">
         <div className="rounded-md bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -63,7 +107,14 @@ export function ViewRenderer({ screenName }: ViewRendererProps) {
       value={{
         viewStore: storeRef.current,
         connections: definition.connections ?? [],
-        definition,
+        initialParams,
+        screenParams,
+        definition: {
+          entities: definition.entities ?? [],
+          connections: definition.connections ?? [],
+          navbars: definition.navbars ?? [],
+          objects: definition.objects ?? [],
+        },
       }}
     >
       <ViewContent definition={definition} />
@@ -74,65 +125,237 @@ export function ViewRenderer({ screenName }: ViewRendererProps) {
 // ─── ViewContent: renderiza navbars e objects ────────────────────────────────
 
 function ViewContent({ definition }: { definition: ViewDefinition }) {
-  const hasNavbars = definition.navbars && definition.navbars.length > 0
+  const navbars = definition.navbars ?? []
+  const objects = definition.objects ?? []
+  const hasNavbars = navbars.length > 0
+
+  const modalObjects = objects.filter((o) => o.variant === 'modal')
+  const inlineObjects = objects.filter((o) => o.variant !== 'modal')
 
   if (hasNavbars) {
-    return <NavbarView navbars={definition.navbars} definition={definition} />
+    const navbarObjectIds = new Set(
+      navbars.flatMap((n) => n.tabs.flatMap((t) => t.objects)),
+    )
+    const orphanDynamic = inlineObjects.filter((o) => o.dynamic && !navbarObjectIds.has(o.id))
+
+    return (
+      <div className="flex flex-col h-full overflow-auto">
+        <div className="p-4 grid grid-cols-12 gap-4 items-start">
+          {navbars.map((navbar) => (
+            <NavbarSection
+              key={navbar.id}
+              navbar={navbar}
+              allObjects={inlineObjects}
+            />
+          ))}
+        </div>
+        {orphanDynamic.map((obj) => <ObjectSlot key={obj.id} objectDef={obj} />)}
+        {modalObjects.map((obj) => <ModalWrapper key={obj.id} objectDef={obj} />)}
+      </div>
+    )
   }
 
-  // Sem navbars: renderiza todos os objects diretamente
   return (
-    <div className="p-4 space-y-4">
-      {definition.objects.map((obj) => (
-        <ObjectRenderer key={obj.id} objectDef={obj} />
-      ))}
-    </div>
+    <>
+      <div className="p-4 grid grid-cols-12 gap-4 items-start">
+        {inlineObjects.map((obj) => (
+          <ObjectSlot key={obj.id} objectDef={obj} />
+        ))}
+      </div>
+      {modalObjects.map((obj) => <ModalWrapper key={obj.id} objectDef={obj} />)}
+    </>
   )
 }
 
-// ─── NavbarView: tabs de navegação entre grupos de objects ───────────────────
+// ─── NavbarSection: uma seção com tabs internas ──────────────────────────────
 
-function NavbarView({
-  navbars,
-  definition,
+function NavbarSection({
+  navbar,
+  allObjects,
 }: {
-  navbars: Navbar[]
-  definition: ViewDefinition
+  navbar: Navbar
+  allObjects: ObjectDefinition[]
 }) {
-  const [activeNavbar, setActiveNavbar] = useState(navbars[0]?.id ?? '')
+  const { initialParams = {} } = useViewContext()
 
-  const currentNavbar = navbars.find((n) => n.id === activeNavbar)
-  const objectsToRender = definition.objects.filter((obj) =>
-    currentNavbar?.objects.includes(obj.id),
+  // Contexto de avaliação: initialParams (tipo_nfe, etc. vindos da URL)
+  const exprContext = initialParams as Record<string, unknown>
+
+  // Filtra tabs visíveis avaliando `tab.visible`
+  const visibleTabs = navbar.tabs.filter((tab) => {
+    if (!tab.visible) return true
+    const result = evalExpr(tab.visible, exprContext)
+    return result !== false && result !== 0 && result !== ''
+  })
+
+  const [activeTab, setActiveTab] = useState(visibleTabs[0]?.id ?? '')
+
+  // Se a tab ativa ficou oculta, troca para a primeira visível
+  useEffect(() => {
+    if (!visibleTabs.find((t) => t.id === activeTab)) {
+      setActiveTab(visibleTabs[0]?.id ?? '')
+    }
+  }, [visibleTabs.map((t) => t.id).join(',')])
+
+  const currentTab = visibleTabs.find((t) => t.id === activeTab) ?? visibleTabs[0]
+  const objectsToRender = allObjects.filter((obj) =>
+    currentTab?.objects?.includes(obj.id) ?? false,
   )
 
+  const hasTabs = visibleTabs.length > 1
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Tabs */}
-      {navbars.length > 1 && (
+    <div className={resolveColClass(navbar.class)} style={navbar.style as React.CSSProperties}>
+      {hasTabs && (
         <div className="flex border-b border-border bg-card px-4">
-          {navbars.map((nav) => (
+          {visibleTabs.map((tab) => (
             <button
-              key={nav.id}
-              onClick={() => setActiveNavbar(nav.id)}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
               className={[
                 'px-4 py-3 text-sm font-medium border-b-2 transition-colors',
-                activeNavbar === nav.id
+                activeTab === tab.id
                   ? 'border-primary text-primary'
                   : 'border-transparent text-muted-foreground hover:text-foreground',
               ].join(' ')}
             >
-              {nav.label}
+              {tab.label}
             </button>
           ))}
         </div>
       )}
-
-      {/* Objects da navbar ativa */}
-      <div className="flex-1 overflow-auto p-4 space-y-4">
+      <div className="grid grid-cols-12 gap-4 items-start p-2">
         {objectsToRender.map((obj) => (
-          <ObjectRenderer key={obj.id} objectDef={obj} />
+          <ObjectSlot key={obj.id} objectDef={obj} />
         ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── ObjectSlot: wrapper de grid que desaparece quando o object é oculto ─────
+//
+// Um <div> vazio no CSS Grid ainda ocupa espaço (célula vazia).
+// ObjectSlot lê o mode do viewStore e retorna null (sem div) quando o
+// object é dynamic e ainda não foi ativado — eliminando o espaço vazio.
+
+function ObjectSlot({ objectDef }: { objectDef: ObjectDefinition }) {
+  const { viewStore } = useViewContext()
+  const objectMode = useStore(viewStore, (s) => s.objects[objectDef.id]?.mode ?? null)
+
+  // dynamic sem mode → nem renderiza o wrapper (zero espaço no grid)
+  if (objectDef.dynamic && !objectMode) return null
+
+  return (
+    <div className={resolveColClass(objectDef.class)}>
+      <ObjectRenderer objectDef={objectDef} />
+    </div>
+  )
+}
+
+// ─── ModalWrapper: renderiza um object variant="modal" como overlay ───────────
+
+const MODAL_SIZE: Record<string, string> = {
+  sm:   'max-w-sm',
+  md:   'max-w-lg',
+  lg:   'max-w-2xl',
+  xl:   'max-w-4xl',
+  xxl:  'max-w-6xl',
+  full: 'max-w-[95vw]',
+}
+
+function ModalWrapper({ objectDef }: { objectDef: ObjectDefinition }) {
+  const { viewStore } = useViewContext()
+  const objectMode = useStore(viewStore, (s) => s.objects[objectDef.id]?.mode ?? null)
+  const setObjectState = useStore(viewStore, (s) => s.setObjectState)
+
+  // Modal só abre quando seu mode é definido (create | edit | detail | list)
+  if (!objectMode) return null
+
+  function handleClose() {
+    setObjectState(objectDef.id, { mode: null, selectedRow: null, formData: null })
+  }
+
+  const sizeClass = MODAL_SIZE[objectDef.size ?? 'lg'] ?? 'max-w-2xl'
+  const centeredClass = objectDef.centered !== false ? 'items-center' : 'items-start pt-16'
+
+  return createPortal(
+    <div
+      className={`fixed inset-0 z-50 flex ${centeredClass} justify-center bg-black/50 p-4`}
+      onClick={(e) => { if (e.target === e.currentTarget) handleClose() }}
+    >
+      <div
+        className={`relative w-full ${sizeClass} max-h-[90vh] overflow-hidden rounded-lg bg-background shadow-xl flex flex-col`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header do modal */}
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold text-foreground">
+            {objectDef.title ?? ''}
+          </h2>
+          <button
+            type="button"
+            onClick={handleClose}
+            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            aria-label="Fechar"
+          >
+            <i className="bi bi-x-lg text-sm" aria-hidden />
+          </button>
+        </div>
+
+        {/* Conteúdo do modal */}
+        <div className="flex-1 overflow-auto p-4">
+          <ObjectRenderer objectDef={objectDef} />
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+// ─── HomeScreen: tela inicial quando não há view "home" configurada ───────────
+
+function HomeScreen() {
+  const user = useAuthStore((s) => s.user)
+  const tenant = useAuthStore((s) => s.tenant)
+  const modules = useAuthStore((s) => s.modules)
+
+  const firstName = user?.name?.split(' ')[0] ?? user?.username ?? 'Usuário'
+
+  return (
+    <div className="flex flex-col h-full items-center justify-center p-8 text-center">
+      <div className="max-w-md">
+        {/* Ícone */}
+        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-3xl">
+          🏠
+        </div>
+
+        {/* Boas-vindas */}
+        <h1 className="text-2xl font-bold text-foreground">
+          Olá, {firstName}!
+        </h1>
+        {tenant && (
+          <p className="mt-1 text-sm text-muted-foreground">{tenant.label}</p>
+        )}
+        <p className="mt-4 text-sm text-muted-foreground">
+          Selecione um módulo no menu lateral para começar.
+        </p>
+
+        {/* Módulos disponíveis como atalhos */}
+        {modules.length > 0 && (
+          <div className="mt-8 flex flex-wrap justify-center gap-2">
+            {modules.slice(0, 6).map((mod) => (
+              <div
+                key={mod.idModulo}
+                className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground"
+                style={{ borderColor: mod.color ? `${mod.color}40` : undefined }}
+              >
+                {mod.icon && <i className={`${mod.icon} text-xs`} style={{ color: mod.color ?? undefined }} />}
+                <span>{mod.shortName ?? mod.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

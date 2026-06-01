@@ -138,7 +138,7 @@ function formatStatic(value: unknown, col: ComponentDefinition): string {
 // ─── BulkEditTableObject ──────────────────────────────────────────────────────
 
 export function BulkEditTableObject({ objectDef }: Props) {
-  const { viewStore, initialParams = {}, connections, definition } = useViewContext()
+  const { viewStore, initialParams = {}, connections, definition, screenParams } = useViewContext()
   const objectState = useStore(viewStore, (s) => s.objects[objectDef.id])
   const setObjectState = useStore(viewStore, (s) => s.setObjectState)
   const queryClient = useQueryClient()
@@ -315,6 +315,7 @@ export function BulkEditTableObject({ objectDef }: Props) {
           entity: objectDef.entity,
           inputs: ctx,
           entities: {},
+          screenParams,
         })
         if (result.messageError) throw new Error(result.messageError)
         if (result.message) toast.success(result.message)
@@ -425,6 +426,7 @@ export function BulkEditTableObject({ objectDef }: Props) {
             action: 'edit',
             bulkSelectedData: [row],
             entities: {},
+            screenParams,
             customParams: searchParams,
           })
             .then(r => {
