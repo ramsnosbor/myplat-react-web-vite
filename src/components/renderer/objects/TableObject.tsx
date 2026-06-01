@@ -461,7 +461,7 @@ export function TableObject({ objectDef }: Props) {
                       colSpan={dataColumns.length + (actionColumns.length > 0 ? 1 : 0) || 1}
                       className="px-3 py-12 text-center"
                     >
-                      <TableEmptyState message={objectDef.emptyState ?? 'Nenhum registro encontrado.'} />
+                      <TableEmptyState message={typeof objectDef.emptyState === 'string' ? objectDef.emptyState : 'Nenhum registro encontrado.'} />
                     </td>
                   </tr>
                 ) : (
