@@ -454,18 +454,18 @@ export function TableObject({ objectDef }: Props) {
                       </th>
                     )
                   })}
-                  {actionColumns.length > 0 && (
-                    <th className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">
-                      Ações
+                  {actionColumns.map((col, i) => (
+                    <th key={`act-${i}`} className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">
+                      {col.title ?? ''}
                     </th>
-                  )}
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={dataColumns.length + (actionColumns.length > 0 ? 1 : 0) || 1}
+                      colSpan={dataColumns.length + actionColumns.length || 1}
                       className="px-3 py-12 text-center"
                     >
                       <TableEmptyState message={typeof objectDef.emptyState === 'string' ? objectDef.emptyState : 'Nenhum registro encontrado.'} />
@@ -508,22 +508,20 @@ export function TableObject({ objectDef }: Props) {
                           </td>
                           )
                         })}
-                        {actionColumns.length > 0 && (
-                          <td className="px-3 py-2">
+                        {actionColumns.map((col, ci) => (
+                          <td key={`act-${ci}`} className="px-3 py-2">
                             <div className="flex flex-col items-end gap-1">
-                              {actionColumns.flatMap((col) =>
-                                (col.actions ?? []).map((action, ai) => (
-                                  <ActionButton
-                                    key={`${col.idComponent}-${ai}`}
-                                    action={action}
-                                    row={row}
-                                    onAction={handleRowAction}
-                                  />
-                                )),
-                              )}
+                              {(col.actions ?? []).map((action, ai) => (
+                                <ActionButton
+                                  key={`${col.idComponent}-${ai}`}
+                                  action={action}
+                                  row={row}
+                                  onAction={handleRowAction}
+                                />
+                              ))}
                             </div>
                           </td>
-                        )}
+                        ))}
                       </tr>
                     )
                   })
