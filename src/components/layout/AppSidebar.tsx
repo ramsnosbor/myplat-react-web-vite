@@ -384,9 +384,13 @@ function MenuTreeNodeView({
     )
   }
 
-  // Folha navegável
+  // Folha navegável — usa o mesmo mx-2 do grupo raiz para alinhar horizontalmente
   if (isLeaf(item)) {
-    return <FlyoutMenuItem item={item} depth={depth} onNavigate={onNavigate} />
+    return (
+      <div className={isRoot ? 'mx-2' : ''}>
+        <FlyoutMenuItem item={item} depth={depth} onNavigate={onNavigate} />
+      </div>
+    )
   }
 
   // Pai sem filhos e sem URL — oculta
