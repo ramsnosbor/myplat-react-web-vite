@@ -26,5 +26,8 @@ export interface JwtPayload {
   username?: string
   name?: string
   type?: string
+  tpVinculo?: string
+  grantedAuthorities?: string[]
+  authorities?: string[]
   [key: string]: unknown
 }

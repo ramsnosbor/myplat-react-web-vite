@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AppRouter } from './router'
+import { ToastProvider } from './components/ui/Toast'
 
 // ─── TanStack Query client ────────────────────────────────────────────────────
 
@@ -18,7 +19,9 @@ const queryClient = new QueryClient({
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AppRouter />
+      <ToastProvider>
+        <AppRouter />
+      </ToastProvider>
     </QueryClientProvider>
   )
 }

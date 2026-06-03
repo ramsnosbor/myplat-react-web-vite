@@ -93,10 +93,14 @@ export const entityApi = {
    * Servidor retorna { entities: [{ entity, config: { primary, ... } }], data: [...] }
    * Retorna o primeiro item de entities (o schema da entidade solicitada).
    */
-  getSchema(entity: string): Promise<EntitySchemaResponse | undefined> {
+  getSchema(entity: string): Promise<EntitySchemaResponse> {
     return apiClient
       .get<{ entities: EntitySchemaResponse[]; data?: unknown[] }>(`/entities/${entity}`)
-      .then((r) => r.data.entities?.[0])
+      .then((r) => {
+        const schema = r.data.entities?.[0]
+        if (!schema) throw new Error(`Schema nao encontrado para a entidade "${entity}".`)
+        return schema
+      })
   },
 
   /**
@@ -130,7 +134,7 @@ export const entityApi = {
 function normalizeMutationResponse<T>(
   payload: ServerMutationPayload<T> | EntityMutationResponse<T>,
 ): EntityMutationResponse<T> {
-  const p = payload as Record<string, unknown>
+  const p = payload as unknown as Record<string, unknown>
 
   if (Array.isArray(p.data)) {
     // Formato novo: extrai data[0] e primary do schema

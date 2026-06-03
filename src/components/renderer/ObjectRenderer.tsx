@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, lazy, Suspense } from 'react'
 import { useStore } from 'zustand'
 import { useViewContext } from './ViewContext'
 import type { ObjectDefinition, Connection } from '@/types/view.types'
@@ -6,9 +6,12 @@ import { TableObject } from './objects/TableObject'
 import { FilterObject } from './objects/FilterObject'
 import { CrudObject } from './objects/CrudObject'
 import { PanelObject } from './objects/PanelObject'
-import { ChartObject } from './objects/ChartObject'
 import { GridObject } from './objects/GridObject'
 import { BulkEditTableObject } from './objects/BulkEditTableObject'
+import { IframeObject } from './objects/IframeObject'
+
+// Lazy: isola recharts num chunk separado, evitando o bug de bundling em prod
+const ChartObject = lazy(() => import('./objects/ChartObject').then((m) => ({ default: m.ChartObject })))
 
 // ─── Hook: calcula params do filho a partir do estado do pai ─────────────────
 
@@ -143,11 +146,17 @@ export function ObjectRenderer({ objectDef }: ObjectRendererProps) {
     case 'panel':
       return <PanelObject objectDef={objectDef} />
     case 'chart':
-      return <ChartObject objectDef={objectDef} />
+      return (
+        <Suspense fallback={<div className="flex items-center justify-center py-8"><div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>}>
+          <ChartObject objectDef={objectDef} />
+        </Suspense>
+      )
     case 'grid':
       return <GridObject objectDef={objectDef} />
     case 'bulkEditTable':
       return <BulkEditTableObject objectDef={objectDef} />
+    case 'iframe':
+      return <IframeObject objectDef={objectDef} />
     default:
       return (
         <div className="rounded-md border border-border p-4 text-sm text-muted-foreground">

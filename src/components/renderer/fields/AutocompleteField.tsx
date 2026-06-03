@@ -103,7 +103,9 @@ export function AutocompleteField({ component: comp, control, setValue, disabled
   const dropdownRef = useRef<HTMLDivElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Ao carregar em modo edição: busca o texto de display pela FK já salva
+  // Ao carregar em modo edição: busca o item pela FK já salva para restaurar label E campos extras.
+  // Re-aplica o `fields` mapping (ex: tipo_lancamento_acao) — sem isso, campos copiados pelo
+  // autocomplete ficam vazios no form, quebrando condições de visibilidade de objetos filhos.
   useEffect(() => {
     if (field.value && !selectedLabel) {
       entityApi
@@ -111,10 +113,16 @@ export function AutocompleteField({ component: comp, control, setValue, disabled
         .then((res) => {
           const items = (res as { data?: EntityRecord[] }).data ?? (Array.isArray(res) ? res as EntityRecord[] : [])
           if (items.length > 0) {
-            const raw = String(items[0][labelField] ?? '')
+            const item = items[0]
+            const raw = String(item[labelField] ?? '')
             const text = applyLabelTemplate(raw, formValuesRef.current)
             setSelectedLabel(text)
             setInputText(text)
+            // Re-aplica fields mapping — copia campos extras do item para o form
+            // (ex: tipo_lancamento_acao, necessário para visibilidade de objetos filhos)
+            for (const f of comp.fields ?? []) {
+              setValue(f.as, item[f.field])
+            }
           }
         })
         .catch(() => {})
@@ -182,7 +190,10 @@ export function AutocompleteField({ component: comp, control, setValue, disabled
   }
 
   function handleFocus() {
-    if (comp.loadOnFocus && options.length === 0) fetchOptions(inputText)
+    // loadOnFocus: padrão true — busca ao entrar no campo se ainda não há opções carregadas.
+    // Use loadOnFocus: false para desativar (útil em autocompletes com datasets muito grandes).
+    const shouldLoadOnFocus = comp.loadOnFocus !== false
+    if (shouldLoadOnFocus && options.length === 0) fetchOptions(inputText)
     setIsOpen(true)
   }
 
@@ -197,12 +208,9 @@ export function AutocompleteField({ component: comp, control, setValue, disabled
     setInputText(displayText)
     setIsOpen(false)
 
-    // Grava o texto de display no nameForm (para exibição e referência no form)
-    if (displayField !== fkField) {
-      setValue(displayField, displayText)
-    }
-
-    // Campo auxiliar de texto (nameFormAutoComplete)
+    // Grava o label apenas no campo auxiliar explícito (nameFormAutoComplete),
+    // nunca no nameForm — que pode ser um campo real da tabela e não deve ser sobrescrito.
+    // O display do autocomplete é gerenciado pelo estado interno (inputText/selectedLabel).
     if (comp.nameFormAutoComplete) {
       setValue(comp.nameFormAutoComplete, displayText)
     }
@@ -220,7 +228,7 @@ export function AutocompleteField({ component: comp, control, setValue, disabled
     setOptions([])
     setIsOpen(false)
 
-    if (displayField !== fkField) setValue(displayField, '')
+    // Mesma regra do selectOption: não escreve no nameForm — só no nameFormAutoComplete explícito
     if (comp.nameFormAutoComplete) setValue(comp.nameFormAutoComplete, '')
     for (const f of comp.fields ?? []) setValue(f.as, '')
   }

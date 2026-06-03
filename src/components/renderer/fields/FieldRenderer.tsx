@@ -1,4 +1,4 @@
-import { useWatch } from 'react-hook-form'
+import { useWatch, useController } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
 import type {
   UseFormRegister,
@@ -242,19 +242,7 @@ export function FieldRenderer({ component: comp, register, control, setValue, wa
     case 'checkbox':
       return (
         <div className={colClass}>
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id={fieldName} disabled={isDisabled}
-                className="h-4 w-4 rounded border-input" {...register(fieldName, registerOpts)} />
-              {label && (
-                <label htmlFor={fieldName} className="text-sm font-medium">
-                  {label}
-                  {comp.required && <span className="ml-0.5 text-destructive" aria-hidden>*</span>}
-                </label>
-              )}
-            </div>
-            {errorMessage && <p className="text-xs text-destructive" role="alert">{errorMessage}</p>}
-          </div>
+          <SwitchField component={comp} control={control} disabled={isDisabled} />
         </div>
       )
 
@@ -300,6 +288,60 @@ interface ChipSelectFieldProps {
   control: Control<Record<string, unknown>>
   setValue: UseFormSetValue<Record<string, unknown>>
   disabled?: boolean
+}
+
+// ─── SwitchField ─────────────────────────────────────────────────────────────
+// Checkbox/switch controlado que armazena checkedValue/uncheckedValue no form
+// em vez do boolean nativo do React Hook Form.
+
+interface SwitchFieldProps {
+  component: ComponentDefinition
+  control: Control<Record<string, unknown>>
+  disabled?: boolean
+}
+
+function SwitchField({ component: comp, control, disabled }: SwitchFieldProps) {
+  const checkedValue   = comp.checkedValue   ?? 'Sim'
+  const uncheckedValue = comp.uncheckedValue ?? 'Não'
+  const fieldName = comp.nameForm ?? comp.name
+  const label = comp.label ?? comp.name
+
+  const { field, fieldState } = useController({
+    name: fieldName,
+    control,
+    rules: { required: comp.required ? `${label} é obrigatório` : false },
+  })
+
+  const isChecked = field.value === checkedValue || field.value === true
+
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    field.onChange(e.target.checked ? checkedValue : uncheckedValue)
+  }
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id={fieldName}
+          checked={isChecked}
+          onChange={handleChange}
+          disabled={disabled}
+          className="h-4 w-4 rounded border-input"
+        />
+        {label && (
+          <label htmlFor={fieldName} className="text-sm font-medium">
+            {label}
+            {comp.required && <span className="ml-0.5 text-destructive" aria-hidden>*</span>}
+          </label>
+        )}
+        {comp.showValue && (
+          <span className="text-xs text-muted-foreground">({isChecked ? checkedValue : uncheckedValue})</span>
+        )}
+      </div>
+      {fieldState.error && <p className="text-xs text-destructive">{fieldState.error.message}</p>}
+    </div>
+  )
 }
 
 function ChipSelectField({ component: comp, control, setValue, disabled }: ChipSelectFieldProps) {

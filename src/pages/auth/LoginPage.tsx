@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { authApi } from '@/api/auth.api'
 import { setClientToken } from '@/api/client'
-import { getNextIdentityValidationPath, saveIdentityValidationState, storeSupportedTenantsFromToken, getTenantModuleIds, filterModules } from './authFlow'
+import { getNextIdentityValidationPath, saveIdentityValidationState, storeSupportedTenantsFromToken, getTenantModuleIds, filterModules, isClienteToken, isFullAdminToken, resolveHomePath } from './authFlow'
 import { useAuthStore } from '@/store/authStore'
 
 const schema = z.object({
@@ -203,16 +203,26 @@ export async function finalizarLogin(
 
   const perms = permissions.value
 
-  setAcl(perms.menus, '/home')
-
   if (setUser && userData.status === 'fulfilled') {
     setUser(userData.value)
   }
 
+  let homePath = perms.homePath ?? '/home'
+
   if (setModules) {
     const allModules = await authApi.getSystemModules()
-    setModules(filterModules(allModules, perms.menus, tenantModuleIds))
+    const isClienteAccess = isClienteToken(tenantRes.token) ||
+      (userData.status === 'fulfilled' && String(userData.value.type ?? '').toUpperCase() === 'CLIENTE') ||
+      (perms.perfis ?? []).some((perfil) => String(perfil.tipo ?? '').toUpperCase() === 'CLIENTE')
+    homePath = resolveHomePath(perms, allModules, isClienteAccess)
+    setAcl(perms.menus, homePath)
+    setModules(filterModules(allModules, perms.menus, tenantModuleIds, {
+      failClosed: isClienteAccess,
+      unrestricted: isFullAdminToken(tenantRes.token),
+    }))
+  } else {
+    setAcl(perms.menus, homePath)
   }
 
-  navigate('/home')
+  navigate(homePath)
 }

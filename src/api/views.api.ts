@@ -37,6 +37,41 @@ function normalize(raw: RawViewResponse): ViewDefinition {
     components: byObject[obj.id] ?? [],
   }))
 
+  // Connections: top-level + connections declaradas dentro de cada objeto.
+  // O JSON suporta dois formatos no array de connections de cada objeto:
+  //
+  //   Formato A (com keys explícitas):
+  //     { "child": "tabelaFilho", "keys": { "id_movimento": "id_movimento" } }
+  //
+  //   Formato B (legado — string com o ID do child/parent):
+  //     ["tabelaFilho1", "tabelaFilho2"]
+  //     Neste caso as keys são derivadas por convenção: id_{entity do pai}.
+  //     Ex: CRUDMovimento (entity: "movimento") → chave implícita "id_movimento".
+  //
+  const objectConnections = (view.objects ?? []).flatMap((obj: any) => {
+    const rawConns: unknown[] = obj.connections ?? []
+    const parentEntity: string = obj.entity ?? ''
+    // Chave implícita derivada do nome da entidade do pai (convenção id_{entity})
+    const implicitKey: string | null = parentEntity ? `id_${parentEntity}` : null
+
+    return rawConns.flatMap((conn: any) => {
+      if (typeof conn === 'string') {
+        // Formato B: string → child ID, chave derivada por convenção
+        return [{
+          parent: obj.id,
+          child: conn,
+          keys: implicitKey ? { [implicitKey]: implicitKey } : {},
+        }]
+      }
+      if (conn && typeof conn === 'object' && conn.child) {
+        // Formato A: objeto com child (+ keys opcionais)
+        return [{ parent: obj.id, ...conn }]
+      }
+      return []
+    })
+  })
+  const allConnections = [...(view.connections ?? []), ...objectConnections]
+
   const navbars: Navbar[] = (view.navbars ?? []).map((nav: any) => {
     // Formato com tabs explícitas: { tabs: [{ id, objectList/objects }] }
     // Formato card/flat:          { objectList: [...] }  (sem tabs)
@@ -64,7 +99,7 @@ function normalize(raw: RawViewResponse): ViewDefinition {
 
   return {
     entities: view.entities ?? [],
-    connections: view.connections ?? [],
+    connections: allConnections,
     navbars,
     objects,
     parameters: view.parameters ?? [],

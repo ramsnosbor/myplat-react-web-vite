@@ -11,7 +11,8 @@ import type { EntitySchemaResponse } from '@/api/entity.api'
 import { scriptApi } from '@/api/script.api'
 import { apiClient } from '@/api/client'
 import { useToast } from '@/components/ui/Toast'
-import { evalExpr, interpolateExpr } from '@/utils/evalExpr' // interpolateExpr usado no título
+import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { evalExpr, evalArithmeticExpr, interpolateExpr } from '@/utils/evalExpr' // interpolateExpr usado no título
 import type { ObjectDefinition, CrudAction } from '@/types/view.types'
 import type { EntityRecord } from '@/types/entity.types'
 import type { ObjectState } from '@/store/viewStore'
@@ -31,6 +32,7 @@ export function CrudObject({ objectDef }: Props) {
   const setObjectState = useStore(viewStore, (s) => s.setObjectState)
   const queryClient = useQueryClient()
   const toast = useToast()
+  const { confirm, confirmDialog } = useConfirm()
 
   // Mapa id→entity: nos objetos/componentes "entity" guarda o entities[].id,
   // mas a API recebe o entities[].entity (que pode diferir do id).
@@ -56,8 +58,11 @@ export function CrudObject({ objectDef }: Props) {
   const qp = objectState?.queryParams
 
   // ─── Filtro para carregar o registro ─────────────────────────────────────────
-  // Prioridade: queryParams (setados pela action) > initialParams > selectedRow
-  // Nunca usa connectionParams — esses são filtros de listagem, não de registro único.
+  // Prioridade:
+  //   1. queryParams (setados por action explícita)
+  //   2. connectionParams (derivados do estado do pai via connections)
+  //   3. initialParams filtrados a id_* (navegação via URL)
+  //   4. selectedRow (fallback de última instância)
   const isValid = (v: unknown) => v !== undefined && v !== null && v !== ''
 
   const loadFilter: Record<string, unknown> = (() => {
@@ -67,14 +72,21 @@ export function CrudObject({ objectDef }: Props) {
       if (entries.length > 0) return Object.fromEntries(entries)
     }
 
-    // 2. initialParams de navegação (ex: URL ?id_financeiro=8)
+    // 2. connectionParams — pai propagou o ID via connection (tabela→crud, crud→crud)
+    //    Cobre: cruds com mesma entidade do pai, cruds com entidade diferente (chave FK)
+    const cpEntries = Object.entries(connectionParams).filter(([, v]) => isValid(v))
+    if (cpEntries.length > 0) return Object.fromEntries(cpEntries)
+
+    // 3. initialParams de navegação (ex: URL ?id_financeiro=8)
+    // Preferimos chaves que começam com "id_" para evitar que params de contexto
+    // como "tipo_nfe" entrem como filtro da API.
     const ip = initialParams as Record<string, unknown>
-    const ipEntries = Object.entries(ip).filter(
-      ([k, v]) => k !== '_mode' && isValid(v)
-    )
+    const allIpEntries = Object.entries(ip).filter(([k, v]) => k !== '_mode' && isValid(v))
+    const idIpEntries  = allIpEntries.filter(([k]) => k.startsWith('id_'))
+    const ipEntries    = idIpEntries.length > 0 ? idIpEntries : allIpEntries
     if (ipEntries.length > 0) return Object.fromEntries(ipEntries)
 
-    // 3. selectedRow como último recurso (ex: connection pai→filho sem queryParams explícito)
+    // 4. selectedRow como último recurso (ex: connection pai→filho sem queryParams explícito)
     const sr = objectState?.selectedRow
     if (sr) {
       const srEntry = Object.entries(sr).find(([k, v]) => k.startsWith('id_') && isValid(v))
@@ -117,7 +129,7 @@ export function CrudObject({ objectDef }: Props) {
       return rows[0] as EntityRecord | undefined
     },
     enabled: !!entityId && !!entityName && !isCreate,
-    staleTime: 30_000,
+    staleTime: 0,
   })
 
   const form = useForm<Record<string, unknown>>({
@@ -126,6 +138,22 @@ export function CrudObject({ objectDef }: Props) {
 
   const watchedValues = useWatch({ control: form.control }) as Record<string, unknown>
 
+  // Propaga os valores atuais do form para o formData do store em tempo real.
+  // Permite que ObjectSlot avalie condições de visibilidade de filhos (ex: {{tipo_lancamento_acao}})
+  // usando dados do form do pai antes mesmo de salvar o registro.
+  //
+  // MERGE em vez de substituição: useWatch não rastreia campos apenas setados via setValue
+  // (ex: tipo_lancamento_acao copiado pelo autocomplete fields) — esses campos vêm do banco
+  // via formData ao carregar em edit/detail. O merge preserva os campos do banco que
+  // watchedValues não conhece, enquanto o watchedValues vence para campos registrados.
+  useEffect(() => {
+    if (Object.keys(watchedValues).length > 0) {
+      const currentFormData = (viewStore.getState().objects[objectDef.id]?.formData ?? {}) as Record<string, unknown>
+      setObjectState(objectDef.id, { formData: { ...currentFormData, ...watchedValues } })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(watchedValues)])
+
   // Calcula computedFrom SINCRONAMENTE durante o render — assim formValues já tem
   // os valores corretos antes dos filhos renderizarem (resolve visible dependente de computedFrom)
   // screenParams entra antes de initialParams/watchedValues para ter menor prioridade
@@ -133,22 +161,34 @@ export function CrudObject({ objectDef }: Props) {
   const rawFormValues = { ...screenParams, ...initialParams, ...watchedValues }
   const computedOverrides: Record<string, unknown> = {}
   for (const comp of objectDef.components ?? []) {
-    if (!comp.computedFrom) continue
     const targetField = comp.computedName ?? comp.nameForm ?? comp.name
     if (!targetField) continue
-    const result = evalExpr(comp.computedFrom, rawFormValues)
+    let result: unknown
+    if (comp.computedFrom) {
+      // computedFrom: expressão JS com {{campo}} — avaliada pelo evalExpr
+      result = evalExpr(comp.computedFrom, rawFormValues)
+    } else if (comp.expression) {
+      // expression: expressão aritmética com {campo} — coerção numérica para evitar concatenação de strings
+      result = evalArithmeticExpr(comp.expression, rawFormValues)
+    } else {
+      continue
+    }
     if (result !== undefined) computedOverrides[targetField] = result
   }
   const formValues = { ...rawFormValues, ...computedOverrides }
 
   // Efeito: sincroniza os valores computados com o form (para submissão)
   // Em modo edit, só aplica computedFrom em campos sem valor carregado do banco
-  const allComputedComponents = (objectDef.components ?? []).filter((c) => c.computedFrom)
+  const allComputedComponents = (objectDef.components ?? []).filter((c) => c.computedFrom || c.expression)
   useEffect(() => {
     for (const comp of allComputedComponents) {
       const targetField = comp.computedName ?? comp.nameForm ?? comp.name
       if (!targetField) continue
-      const result = evalExpr(comp.computedFrom!, formValues)
+      const result = comp.computedFrom
+        ? evalExpr(comp.computedFrom, formValues)
+        : comp.expression
+          ? evalArithmeticExpr(comp.expression, formValues)
+          : undefined
       if (result === undefined) continue
       const current = form.getValues(targetField)
       // Em modo edit com registro carregado, não sobrescreve valores existentes do banco
@@ -165,11 +205,17 @@ export function CrudObject({ objectDef }: Props) {
 
   // Preenche o form quando o registro carrega ou o ID muda
   useEffect(() => {
-    if (record) {
-      form.reset({ ...baseDefaults(), ...(record as Record<string, unknown>) })
-      setObjectState(objectDef.id, { formData: record as Record<string, unknown> })
-    } else if (isCreate) {
+    if (isCreate) {
+      // isCreate tem prioridade — mesmo que a query anterior ainda tenha data em cache,
+      // o form deve iniciar limpo com os defaults (evita herdar dados do último edit)
       form.reset(baseDefaults())
+    } else if (record) {
+      // Normaliza ISO 8601 → YYYY-MM-DDTHH:mm:ss para que datetime-local exiba o valor corretamente
+      const normalizedRecord = Object.fromEntries(
+        Object.entries(record as Record<string, unknown>).map(([k, v]) => [k, normalizeDatetimeForInput(v)])
+      )
+      form.reset({ ...baseDefaults(), ...normalizedRecord })
+      setObjectState(objectDef.id, { formData: record as Record<string, unknown> })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [record, entityId, isCreate])
@@ -195,8 +241,9 @@ export function CrudObject({ objectDef }: Props) {
       }
     },
     onSuccess: (result) => {
-      // Invalida queries da entidade para forçar reload em tabelas filhas
+      // Invalida queries da entidade para forçar reload em tabelas filhas e no próprio crud
       queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
+      queryClient.invalidateQueries({ queryKey: ['entity-single', entityName] })
 
       // Invalida entidades de objetos irmãos (filhos do mesmo pai na connection).
       // Ex: salvar CRUDPessoaEndereco (entity: pessoa_endereco) também invalida
@@ -244,6 +291,8 @@ export function CrudObject({ objectDef }: Props) {
         if (!childObj?.entity) continue
         const childEntityName = entityMap[childObj.entity] ?? childObj.entity
         if (childEntityName !== entityName) continue
+        // Modais só abrem por ação explícita do usuário (showObject) — nunca auto-abrem ao salvar
+        if (childObj.variant === 'modal') continue
         // Monta QP usando o mapeamento de keys da connection (childKey ← parentKey)
         const childQP: Record<string, unknown> = {}
         for (const [ck, pk] of Object.entries(conn.keys ?? {})) {
@@ -265,6 +314,8 @@ export function CrudObject({ objectDef }: Props) {
           if (!sibObj?.entity) continue
           const sibEntityName = entityMap[sibObj.entity] ?? sibObj.entity
           if (sibEntityName !== entityName) continue
+          // Modais só abrem por ação explícita do usuário (showObject) — nunca auto-abrem ao salvar
+          if (sibObj.variant === 'modal') continue
           setObjectState(sib.child, {
             mode: 'edit',
             queryParams: sameEntityQP,
@@ -279,6 +330,13 @@ export function CrudObject({ objectDef }: Props) {
         : (objectDef.afterUpdate ?? [])
       for (const hook of hooks) {
         if (hook.type === 'script') {
+          // Resolve params estáticos do hook (ex: {{UTILIZA_PLANO_GERENCIAL}}) contra screenParams + form
+          const hookCustomParams: Record<string, unknown> = {}
+          for (const [key, val] of Object.entries(hook.params ?? {})) {
+            hookCustomParams[key] = val.includes('{{')
+              ? interpolateExpr(val, { ...screenParams, ...newRecord })
+              : val
+          }
           scriptApi.execute(hook.name, {
             data: [],
             inputs: newRecord,
@@ -287,13 +345,24 @@ export function CrudObject({ objectDef }: Props) {
             entity: entityName,
             action: isCreate ? 'create' : 'edit',
             entities: {},
+            customParams: hookCustomParams,
           })
             .then((res) => {
               if (res.messageError) toast.error(res.messageError)
               if (res.message) toast.success(res.message)
-              if (res.reload) queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
+              if (res.reload) {
+                queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
+                queryClient.invalidateQueries({ queryKey: ['entity-single', entityName] })
+              }
+              // Entidades retornadas pelo script
               for (const e of res.affectedEntities ?? []) {
                 queryClient.invalidateQueries({ queryKey: ['entity', e] })
+                queryClient.invalidateQueries({ queryKey: ['entity-single', e] })
+              }
+              // Entidades declaradas estaticamente no JSON do hook
+              for (const e of hook.affectedEntities ?? []) {
+                queryClient.invalidateQueries({ queryKey: ['entity', e] })
+                queryClient.invalidateQueries({ queryKey: ['entity-single', e] })
               }
             })
             .catch(() => {/* silencioso — hook secundário */})
@@ -386,14 +455,42 @@ export function CrudObject({ objectDef }: Props) {
       if (c.computedName) keys.push(c.computedName)
       // Campo sem nameForm em tipo display (usa name como key)
       if (!c.nameForm && DISPLAY_TYPES.has(c.type)) keys.push(c.name)
-      // Autocomplete com params.key: nameForm é só display — apenas params.key vai no body
+      // Autocomplete com params.key: nameForm é só display — apenas params.key vai no body.
+      // Porém, só marca como transient se nenhum outro componente real (não-autocomplete,
+      // não-display) usar o mesmo nameForm. Evita excluir campos reais que compartilham
+      // o mesmo nameForm com um autocomplete (ex: nome_grupo usado em text + autocomplete).
       if (c.type === 'autocomplete' && c.params?.key && c.nameForm) {
-        keys.push(c.nameForm)
+        const sharedWithRealField = (objectDef.components ?? []).some(
+          (other) =>
+            other !== c &&
+            (other.nameForm ?? other.name) === c.nameForm &&
+            !DISPLAY_TYPES.has(other.type) &&
+            other.type !== 'autocomplete' &&
+            !other.transient,
+        )
+        if (!sharedWithRealField) keys.push(c.nameForm)
       }
       // ChipSelect: o name do componente é só label — os campos reais estão em cada opt.nameForm
       if (c.type === 'chipselect') {
         keys.push(c.name)           // ex: "Papéis" — nunca vai ao banco
         if (c.nameForm) keys.push(c.nameForm)
+      }
+      // Autocomplete fields copy: campos copiados via comp.fields (ex: tipo_lancamento_acao)
+      // são dados auxiliares do item selecionado — não são colunas da entidade principal.
+      // Só devem ir no body se houver um componente real (input/select/etc.) explícito para eles.
+      if (c.type === 'autocomplete' && c.fields) {
+        for (const f of c.fields) {
+          const fKey = f.as
+          if (!fKey) continue
+          const hasExplicitComponent = (objectDef.components ?? []).some(
+            (other) =>
+              other !== c &&
+              (other.nameForm ?? other.name) === fKey &&
+              !DISPLAY_TYPES.has(other.type) &&
+              !other.transient,
+          )
+          if (!hasExplicitComponent) keys.push(fKey)
+        }
       }
       return keys
     }),
@@ -401,7 +498,9 @@ export function CrudObject({ objectDef }: Props) {
 
   function onSubmit(values: Record<string, unknown>) {
     const body = Object.fromEntries(
-      Object.entries(values).filter(([key]) => !transientKeys.has(key))
+      Object.entries(values)
+        .filter(([key]) => !transientKeys.has(key))
+        .map(([key, val]) => [key, normalizeDatetimeForDb(val)])
     )
     // Garante FKs da connection pai→filho no body.
     // Cobre o caso em que o modal abre antes de connectionParams estar populado
@@ -484,6 +583,11 @@ export function CrudObject({ objectDef }: Props) {
             queryClient.invalidateQueries({ queryKey: ['entity', e] })
           }
 
+          // 4b. Invalida entidades declaradas na action do JSON (affectedEntities estático)
+          for (const e of action.affectedEntities ?? []) {
+            queryClient.invalidateQueries({ queryKey: ['entity', e] })
+          }
+
           // 5. Redireciona se pedido
           if (result.redirect) {
             const go = () => {
@@ -517,7 +621,7 @@ export function CrudObject({ objectDef }: Props) {
 
   // Handler de ação customizada
   const handleCrudAction = useCallback(
-    (action: CrudAction) => {
+    async (action: CrudAction) => {
       switch (action.action) {
         case 'edit':
         case 'detail': {
@@ -567,7 +671,7 @@ export function CrudObject({ objectDef }: Props) {
           form.handleSubmit(onSubmit)()
           break
         case 'delete':
-          if (entityId && window.confirm(action.confirmation ?? 'Confirmar exclusão?')) {
+          if (entityId && await confirm(action.confirmation ?? 'Deseja realmente excluir este registro?')) {
             entityApi.remove(entityName, entityId).then(() => {
               queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
               form.reset(buildDefaultValues(objectDef, initialParams))
@@ -700,6 +804,7 @@ export function CrudObject({ objectDef }: Props) {
 
   return (
     <div style={objectDef.style as React.CSSProperties}>
+      {confirmDialog}
       {/* Header */}
       {objectDef.title && (
         <h3 className="mb-3 text-sm font-semibold text-foreground">
@@ -898,10 +1003,41 @@ function resolveDynamic(value: unknown, params: Record<string, unknown> = {}): u
   return value
 }
 
+/**
+ * Normaliza ISO 8601 para o formato que datetime-local aceita (YYYY-MM-DDTHH:mm:ss).
+ * Remove milissegundos e timezone — o input não os reconhece e mostra vazio.
+ *   "2025-12-06T13:46:00.000+00:00" → "2025-12-06T13:46:00"
+ *   "2025-12-06T13:46:00"           → "2025-12-06T13:46:00"  (sem alteração)
+ *   outros                          → mantém
+ */
+function normalizeDatetimeForInput(value: unknown): unknown {
+  if (typeof value !== 'string') return value
+  const m = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/)
+  if (m) return `${m[1]}T${m[2]}`
+  return value
+}
+
+/**
+ * Normaliza para o formato MySQL (YYYY-MM-DD HH:mm:ss) antes de enviar ao servidor.
+ *   "2025-12-06T13:46:00.000+00:00" → "2025-12-06 13:46:00"
+ *   "2025-12-06T13:46:00"           → "2025-12-06 13:46:00"
+ *   outros                          → mantém
+ */
+function normalizeDatetimeForDb(value: unknown): unknown {
+  if (typeof value !== 'string') return value
+  const m = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/)
+  if (m) return `${m[1]} ${m[2]}`
+  return value
+}
+
 function formatDate(date: Date, fmt: string): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return fmt
     .replace('YYYY', String(date.getFullYear()))
-    .replace('MM', pad(date.getMonth() + 1))
-    .replace('DD', pad(date.getDate()))
+    .replace('MM',   pad(date.getMonth() + 1))
+    .replace('DD',   pad(date.getDate()))
+    .replace('HH',   pad(date.getHours()))
+    .replace('mm',   pad(date.getMinutes()))
+    .replace('SS',   pad(date.getSeconds()))
+    .replace('ss',   pad(date.getSeconds()))
 }

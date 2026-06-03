@@ -32,7 +32,7 @@ export function CepField({ component: comp, control, setValue, disabled, inputCl
           // Para cidade: seta a FK — o AutocompleteField recarrega o label automaticamente
           setValue(formField, data.id, { shouldDirty: true })
         } else {
-          const value = (data as Record<string, unknown>)[apiKey] ?? ''
+          const value = (data as unknown as Record<string, unknown>)[apiKey] ?? ''
           setValue(formField, value, { shouldDirty: true })
         }
       }

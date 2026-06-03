@@ -1,27 +1,46 @@
-import { useParams } from 'react-router-dom'
+import { useParams, useLocation } from 'react-router-dom'
 import { ViewRenderer } from '@/components/renderer/ViewRenderer'
-import { useAuthStore } from '@/store/authStore'
+import { AppShell } from '@/components/layout/AppShell'
 
 export default function MainPage() {
   const { screen } = useParams<{ screen?: string }>()
-  const homePath = useAuthStore((s) => s.homePath)
+  const location = useLocation()
+  const screenName = screen ?? 'home'
 
-  // Se não há screen na URL, usa a tela padrão do homePath (ex: "home")
-  const screenName = screen ?? homePath.replace('/home/', '') ?? 'home'
+  const state = location.state as {
+    initialParams?: Record<string, unknown>
+    searchParams?: Record<string, unknown>
+    mode?: string
+  } | null
+
+  const stateInitialParams = state?.initialParams ?? {}
+  const stateSearchParams = state?.searchParams ?? {}
+  const urlParams = Object.fromEntries(new URLSearchParams(location.search).entries())
+  const modeParam = state?.mode ? { _mode: state.mode } : {}
+  const hideMenu = String(urlParams.hideMenu ?? '').toLowerCase() === 'true'
+
+  const merged = { ...urlParams, ...stateSearchParams, ...stateInitialParams, ...modeParam }
+  const initialParams = Object.keys(merged).length > 0 ? merged : undefined
+
+  if (hideMenu) {
+    return (
+      <main className="min-h-screen bg-background">
+        <ViewRenderer
+          key={`${screenName}-${JSON.stringify(initialParams ?? {})}`}
+          screenName={screenName}
+          initialParams={initialParams}
+        />
+      </main>
+    )
+  }
 
   return (
-    <div className="flex h-screen bg-background">
-      {/* Sidebar / Menu — será implementado na etapa de layout */}
-      <aside className="hidden w-64 border-r border-border bg-card md:flex md:flex-col">
-        <div className="p-4 text-sm font-semibold text-muted-foreground">
-          Menu (em breve)
-        </div>
-      </aside>
-
-      {/* Conteúdo principal */}
-      <main className="flex-1 overflow-auto">
-        <ViewRenderer key={screenName} screenName={screenName} />
-      </main>
-    </div>
+    <AppShell title={screenName !== 'home' ? screenName : 'Inicio'}>
+      <ViewRenderer
+        key={`${screenName}-${JSON.stringify(initialParams ?? {})}`}
+        screenName={screenName}
+        initialParams={initialParams}
+      />
+    </AppShell>
   )
 }

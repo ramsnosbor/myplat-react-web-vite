@@ -192,6 +192,7 @@ function NavbarSection({
   })
 
   const [activeTab, setActiveTab] = useState(visibleTabs[0]?.id ?? '')
+  const [mobileTabsOpen, setMobileTabsOpen] = useState(false)
 
   // Se a tab ativa ficou oculta, troca para a primeira visível
   useEffect(() => {
@@ -210,22 +211,60 @@ function NavbarSection({
   return (
     <div className={resolveColClass(navbar.class)} style={navbar.style as React.CSSProperties}>
       {hasTabs && (
-        <div className="flex border-b border-border bg-card px-4">
-          {visibleTabs.map((tab) => (
+        <>
+          <div className="hidden border-b border-border bg-card px-4 md:flex">
+            {visibleTabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={[
+                  'px-4 py-3 text-sm font-medium border-b-2 transition-colors',
+                  activeTab === tab.id
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-muted-foreground hover:text-foreground',
+                ].join(' ')}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative border-b border-border bg-card px-2 py-2 md:hidden">
             <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={[
-                'px-4 py-3 text-sm font-medium border-b-2 transition-colors',
-                activeTab === tab.id
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground',
-              ].join(' ')}
+              type="button"
+              onClick={() => setMobileTabsOpen((open) => !open)}
+              className="flex h-10 w-full items-center justify-between gap-3 rounded-md border border-border bg-background px-3 text-left text-sm font-semibold text-foreground shadow-sm"
             >
-              {tab.label}
+              <span className="min-w-0 truncate">{currentTab?.label ?? currentTab?.id ?? 'Aba'}</span>
+              <i className={`bi bi-chevron-down shrink-0 text-xs text-muted-foreground transition-transform ${mobileTabsOpen ? 'rotate-180' : ''}`} aria-hidden />
             </button>
-          ))}
-        </div>
+
+            {mobileTabsOpen && (
+              <div className="absolute left-2 right-2 top-[52px] z-30 overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-xl">
+                {visibleTabs.map((tab) => {
+                  const active = activeTab === tab.id
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveTab(tab.id)
+                        setMobileTabsOpen(false)
+                      }}
+                      className={[
+                        'flex w-full items-center justify-between gap-3 px-3 py-3 text-left text-sm transition-colors',
+                        active ? 'bg-primary/10 font-semibold text-primary' : 'hover:bg-muted',
+                      ].join(' ')}
+                    >
+                      <span className="min-w-0 truncate">{tab.label ?? tab.id}</span>
+                      {active && <i className="bi bi-check2 shrink-0 text-sm" aria-hidden />}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </>
       )}
       <div className="grid grid-cols-12 gap-4 items-start p-2">
         {objectsToRender.map((obj) => (
@@ -243,15 +282,27 @@ function NavbarSection({
 // object é dynamic e ainda não foi ativado — eliminando o espaço vazio.
 
 function ObjectSlot({ objectDef }: { objectDef: ObjectDefinition }) {
-  const { viewStore, screenParams, initialParams = {} } = useViewContext()
+  const { viewStore, screenParams, initialParams = {}, connections } = useViewContext()
   const objectMode = useStore(viewStore, (s) => s.objects[objectDef.id]?.mode ?? null)
+
+  // Lê formData do pai (via connection) para incluir no contexto de visibilidade.
+  // Permite condições como {{tipo_lancamento_acao}}!='transferencia' que dependem
+  // de valores do form do objeto pai, não apenas de screenParams/initialParams.
+  // IMPORTANTE: retornar `undefined` (primitivo estável) quando sem pai — retornar `{}`
+  // criaria um novo objeto a cada render e causaria loop infinito no useStore do Zustand.
+  const parentId = connections.find((c) => c.child === objectDef.id)?.parent
+  const parentFormData = useStore(viewStore, (s) =>
+    parentId
+      ? (s.objects[parentId]?.formData as Record<string, unknown> | undefined)
+      : undefined,
+  )
 
   // dynamic sem mode → nem renderiza o wrapper (zero espaço no grid)
   if (objectDef.dynamic && !objectMode) return null
 
-  // Avalia visible usando screenParams (parâmetros SSO) + initialParams (URL)
+  // Avalia visible usando screenParams + initialParams + formData do pai
   if (objectDef.visible !== undefined && objectDef.visible !== null) {
-    const ctx = { ...screenParams, ...initialParams }
+    const ctx = { ...screenParams, ...initialParams, ...(parentFormData ?? {}) }
     const result = evalExpr(String(objectDef.visible), ctx)
     if (result === false || result === 0 || result === '' || result === null || result === undefined) {
       return null
@@ -315,8 +366,8 @@ function ModalWrapper({ objectDef }: { objectDef: ObjectDefinition }) {
           </button>
         </div>
 
-        {/* Conteúdo do modal */}
-        <div className="flex-1 overflow-auto p-4">
+        {/* Conteúdo do modal — iframe sem padding para ocupar toda a área */}
+        <div className={`flex-1 overflow-auto ${objectDef.type === 'iframe' ? 'p-0' : 'p-4'}`}>
           <ObjectRenderer objectDef={objectDef} />
         </div>
       </div>

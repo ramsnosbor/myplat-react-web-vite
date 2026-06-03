@@ -95,6 +95,7 @@ export interface ObjectDefinition {
   class?: string
   style?: Record<string, string>
   hidden?: boolean
+  visible?: string | boolean
   primaryKey?: string
   defaultView?: string
   afterSubmit?: string
@@ -194,6 +195,10 @@ export interface ObjectDefinition {
 export interface HookAction {
   type: 'script' | 'js'
   name: string
+  /** Params estáticos enviados como customParams ao script (suporta {{campo}} resolvido contra screenParams + form) */
+  params?: Record<string, string>
+  /** Entidades adicionais a invalidar no TanStack Query após o hook executar com sucesso */
+  affectedEntities?: string[]
 }
 
 export interface SubmitAction {
@@ -220,6 +225,8 @@ export interface CrudAction {
   visible?: string | boolean
   tooltip?: string
   reloadAfterAction?: boolean
+  /** Entidades adicionais a invalidar após sucesso (complementa result.affectedEntities do script) */
+  affectedEntities?: string[]
   params?: Record<string, string>
   confirmation?: string
   // action: "executeScript"
@@ -404,7 +411,8 @@ export interface ComponentDefinition {
   navigateTo?: string
 
   // Computed
-  computedFrom?: string
+  computedFrom?: string   // expressão JS com {{campo}} — avaliada em tempo real
+  expression?: string     // expressão aritmética com {campo} (chave simples) — normalizado para computedFrom
   computedName?: string
 
   // Display
@@ -429,6 +437,12 @@ export interface ComponentAction {
   type?: string         // para export: "PDF" | "CSV"
   url?: string          // para navigate: rota destino
   entities?: string[]   // entidades relacionadas (export/navigate)
+  /** Entidades a invalidar após executeScript com sucesso (complementa result.affectedEntities do script) */
+  affectedEntities?: string[]
+  /** Recarrega a entidade atual do objeto após executeScript com sucesso */
+  reloadAfterAction?: boolean
+  /** Params estáticos enviados como customParams ao script (suporta {{campo}} resolvido contra screenParams + initialParams) */
+  customParams?: Record<string, string>
   visibleOn?: string[]
   visible?: string
   keyboardShortcut?: string

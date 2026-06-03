@@ -1,11 +1,17 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/api/auth.api'
 import type { AclMap, ModuleDefinition, MenuItemDefinition } from '@/api/auth.api'
-import { getTenantModuleIds, filterModules } from '@/pages/auth/authFlow'
+import { getTenantModuleIds, filterModules, sortMenusByModuleOrder, isClienteToken, isFullAdminToken, resolveHomePath } from '@/pages/auth/authFlow'
 
 const LEAF_TYPES = new Set(['son', 'item', 'I'])
+const STATIC_SCREEN_ROUTES: Record<string, string> = {
+  'dfe-consulta': '/dfe-consulta',
+  dfeConsulta: '/dfe-consulta',
+  'dfe-emitentes': '/dfe-emitentes',
+  dfeEmitentes: '/dfe-emitentes',
+}
 
 function isLeaf(menu: MenuItemDefinition) {
   return LEAF_TYPES.has(menu.type) && !!menu.url
@@ -14,47 +20,42 @@ function isLeaf(menu: MenuItemDefinition) {
 function parseMenuUrl(url: string): {
   screen?: string
   params?: Record<string, string>
+  search?: string
   external?: boolean
   href?: string
 } {
   if (!url) return {}
   if (url.startsWith('http')) return { external: true, href: url }
 
-  const [path, qs] = url.split('?')
-  const params: Record<string, string> = {}
-  if (qs) {
-    for (const part of qs.split('&')) {
-      const [k, v] = part.split('=')
-      if (k) params[k] = v ?? ''
-    }
-  }
+  const [rawPath, ...queryParts] = url.split('?')
+  const path = rawPath.replace(/^\/+/, '').replace(/^home\/?/, '')
+  const qs = queryParts.join('?')
+  const search = qs ? `?${qs}` : ''
+  const params = Object.fromEntries(new URLSearchParams(qs).entries())
 
   return {
     screen: path,
     params: Object.keys(params).length > 0 ? params : undefined,
+    search,
   }
 }
 
-export function AppSidebar() {
+function useEnsureModulesLoaded() {
   const modules = useAuthStore((s) => s.modules)
   const acl = useAuthStore((s) => s.acl)
   const token = useAuthStore((s) => s.token)
+  const user = useAuthStore((s) => s.user)
   const setModules = useAuthStore((s) => s.setModules)
   const setAcl = useAuthStore((s) => s.setAcl)
   const setUser = useAuthStore((s) => s.setUser)
-  const navigate = useNavigate()
-
-  const [activeModuleId, setActiveModuleId] = useState<number | null>(null)
   const [bootStatus, setBootStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
-  const [flyoutOpen, setFlyoutOpen] = useState(false)
-  const [showScrollHint, setShowScrollHint] = useState(false)
   const didBoot = useRef(false)
-  const navRef = useRef<HTMLDivElement | null>(null)
-
-  const activeModule = modules.find((m) => m.idModulo === activeModuleId) ?? modules[0] ?? null
 
   useEffect(() => {
-    if (modules.length > 0) return
+    if (modules.length > 0) {
+      setBootStatus('done')
+      return
+    }
     if (!token) return
     if (didBoot.current) return
     didBoot.current = true
@@ -64,25 +65,37 @@ export function AppSidebar() {
       setBootStatus('loading')
       try {
         let resolvedAcl: AclMap = acl ?? {}
+        let isClienteAccess = isClienteToken(token ?? '') || String(user?.type ?? '').toUpperCase() === 'CLIENTE'
 
-        if (!acl) {
-          const [permsResult, userResult] = await Promise.allSettled([
-            authApi.getPermissions(),
-            authApi.getLoggedUser(),
-          ])
-          if (permsResult.status === 'rejected') {
+        const [permsResult, userResult] = await Promise.allSettled([
+          authApi.getPermissions(),
+          authApi.getLoggedUser(),
+        ])
+        if (permsResult.status === 'rejected') {
+          if (!acl) {
             setBootStatus('error')
             return
           }
+        } else {
           const perms = permsResult.value
           resolvedAcl = perms.menus
-          setAcl(perms.menus, perms.homePath ?? undefined)
-          if (userResult.status === 'fulfilled') setUser(userResult.value)
+          isClienteAccess = isClienteAccess || (perms.perfis ?? []).some((perfil) => String(perfil.tipo ?? '').toUpperCase() === 'CLIENTE')
+          if (userResult.status === 'fulfilled') {
+            isClienteAccess = isClienteAccess || String(userResult.value.type ?? '').toUpperCase() === 'CLIENTE'
+            setUser(userResult.value)
+          }
         }
 
         const tenantModuleIds = getTenantModuleIds(token ?? '')
         const allModules = await authApi.getSystemModules()
-        setModules(filterModules(allModules, resolvedAcl, tenantModuleIds))
+        if (permsResult.status === 'fulfilled') {
+          const homePath = resolveHomePath(permsResult.value, allModules, isClienteAccess)
+          setAcl(permsResult.value.menus, homePath)
+        }
+        setModules(filterModules(allModules, resolvedAcl, tenantModuleIds, {
+          failClosed: isClienteAccess,
+          unrestricted: isFullAdminToken(token ?? ''),
+        }))
         setBootStatus('done')
       } catch (err) {
         console.error('[AppSidebar] bootMenu falhou:', err)
@@ -91,6 +104,30 @@ export function AppSidebar() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modules.length, token])
+
+  return { modules, bootStatus }
+}
+
+function navigateToParsedMenu(navigate: ReturnType<typeof useNavigate>, parsed: ReturnType<typeof parseMenuUrl>) {
+  const staticRoute = STATIC_SCREEN_ROUTES[parsed.screen ?? '']
+  if (staticRoute) {
+    navigate(`${staticRoute}${parsed.search ?? ''}`, parsed.params ? { state: { initialParams: parsed.params } } : undefined)
+    return
+  }
+  navigate(`/home/${parsed.screen}${parsed.search ?? ''}`, parsed.params ? { state: { initialParams: parsed.params } } : undefined)
+}
+
+export function AppSidebar() {
+  const { modules, bootStatus } = useEnsureModulesLoaded()
+  const homePath = useAuthStore((s) => s.homePath)
+  const navigate = useNavigate()
+
+  const [activeModuleId, setActiveModuleId] = useState<number | null>(null)
+  const [flyoutOpen, setFlyoutOpen] = useState(false)
+  const [showScrollHint, setShowScrollHint] = useState(false)
+  const navRef = useRef<HTMLDivElement | null>(null)
+
+  const activeModule = modules.find((m) => m.idModulo === activeModuleId) ?? modules[0] ?? null
 
   function handleModuleClick(mod: ModuleDefinition) {
     setActiveModuleId(mod.idModulo)
@@ -129,7 +166,7 @@ export function AppSidebar() {
             active={!flyoutOpen}
             onClick={() => {
               setFlyoutOpen(false)
-              navigate('/home')
+              navigate(homePath || '/home')
             }}
           />
 
@@ -172,6 +209,241 @@ export function AppSidebar() {
         />
       )}
     </>
+  )
+}
+
+export function AppMobileBottomNav() {
+  const { modules, bootStatus } = useEnsureModulesLoaded()
+  const homePath = useAuthStore((s) => s.homePath)
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [activeModuleId, setActiveModuleId] = useState<number | null>(null)
+  const [sheetMode, setSheetMode] = useState<'module' | 'modules' | null>(null)
+
+  const visibleModules = modules.slice(0, 3)
+  const activeModule = modules.find((mod) => mod.idModulo === activeModuleId) ?? visibleModules[0] ?? modules[0] ?? null
+  const isHome = location.pathname === (homePath || '/home')
+
+  function openModule(mod: ModuleDefinition) {
+    setActiveModuleId(mod.idModulo)
+    setSheetMode('module')
+  }
+
+  function closeSheet() {
+    setSheetMode(null)
+  }
+
+  function goHome() {
+    closeSheet()
+    navigate(homePath || '/home')
+  }
+
+  return (
+    <>
+      <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-blue-100 bg-white/95 shadow-2xl shadow-blue-950/20 backdrop-blur md:hidden">
+        <div className="grid h-[68px] grid-cols-5 pb-[env(safe-area-inset-bottom)]">
+          <MobileNavButton icon="bi bi-house" label="Home" active={isHome && !sheetMode} onClick={goHome} />
+          {visibleModules.map((mod) => (
+            <MobileNavButton
+              key={mod.idModulo}
+              icon={mod.icon ?? 'bi bi-grid'}
+              label={mod.shortName ?? mod.name}
+              active={sheetMode === 'module' && activeModuleId === mod.idModulo}
+              onClick={() => openModule(mod)}
+            />
+          ))}
+          <MobileNavButton
+            icon={bootStatus === 'loading' ? 'bi bi-arrow-clockwise' : 'bi bi-grid-3x3-gap'}
+            label="Modulos"
+            active={sheetMode === 'modules'}
+            onClick={() => setSheetMode((mode) => mode === 'modules' ? null : 'modules')}
+          />
+        </div>
+      </nav>
+
+      {sheetMode && (
+        <div className="fixed inset-0 z-40 bg-slate-950/30 md:hidden" onClick={closeSheet}>
+          <section
+            className="absolute inset-x-0 top-0 bottom-[68px] flex flex-col overflow-hidden border-b border-blue-100 bg-background shadow-2xl shadow-blue-950/25"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="flex items-center justify-between gap-3 border-b border-blue-100 bg-white px-4 py-3 shadow-sm shadow-blue-950/5">
+              <div className="min-w-0">
+                <h2 className="truncate text-sm font-semibold text-slate-900">
+                  {sheetMode === 'modules' ? 'Modulos' : activeModule?.name}
+                </h2>
+                <p className="truncate text-xs text-slate-500">
+                  {sheetMode === 'modules' ? 'Selecione um modulo' : 'Selecione uma opcao'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeSheet}
+                className="flex h-9 w-9 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-blue-50 hover:text-blue-700"
+                aria-label="Fechar menu"
+              >
+                <i className="bi bi-x-lg" aria-hidden />
+              </button>
+            </header>
+
+            <div className="flex-1 overflow-y-auto px-3 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {sheetMode === 'modules' ? (
+                modules.length > 0 ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {modules.map((mod) => (
+                      <MobilePanelCard
+                        key={mod.idModulo}
+                        icon={mod.icon ?? 'bi bi-grid'}
+                        label={mod.shortName ?? mod.name}
+                        active={activeModuleId === mod.idModulo}
+                        onClick={() => openModule(mod)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <MobilePanelEmpty loading={bootStatus === 'loading'} />
+                )
+              ) : activeModule ? (
+                <MobileModuleMenus module={activeModule} onNavigate={closeSheet} />
+              ) : (
+                <MobilePanelEmpty loading={bootStatus === 'loading'} />
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+    </>
+  )
+}
+
+function MobileNavButton({ icon, label, active, onClick }: { icon: string; label: string; active?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      className={[
+        'flex min-w-0 flex-col items-center justify-center gap-1 px-1 text-center transition-colors',
+        active ? 'text-blue-700' : 'text-slate-500 hover:bg-blue-50 hover:text-blue-700',
+      ].join(' ')}
+    >
+      <span className={['flex h-8 w-10 items-center justify-center rounded-full transition-colors', active ? 'bg-blue-100' : ''].join(' ')}>
+        <i className={`${icon} text-lg leading-none ${icon === 'bi bi-arrow-clockwise' ? 'animate-spin' : ''}`} aria-hidden />
+      </span>
+      <span className="block w-full truncate text-[10px] font-semibold leading-tight">{label}</span>
+    </button>
+  )
+}
+
+function MobilePanelCard({ icon, label, active, onClick }: { icon: string; label: string; active?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      className={[
+        'flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg border px-2 py-3 text-center transition-colors',
+        active
+          ? 'border-blue-200 bg-blue-50 text-blue-800'
+          : 'border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-800',
+      ].join(' ')}
+    >
+      <i className={`${icon} text-2xl`} aria-hidden />
+      <span className="line-clamp-2 text-xs font-semibold leading-tight">{label}</span>
+    </button>
+  )
+}
+
+function MobileModuleMenus({ module, onNavigate }: { module: ModuleDefinition; onNavigate: () => void }) {
+  const tree = buildMenuTree(module.menus ?? [])
+  if (tree.length === 0) return <MobilePanelEmpty loading={false} />
+  const rootLeaves = tree.filter((node) => isLeaf(node.item)).map((node) => node.item)
+  const groups = tree.filter((node) => !isLeaf(node.item))
+
+  return (
+    <div className="space-y-4">
+      {rootLeaves.length > 0 && (
+        <div className="grid grid-cols-3 gap-2">
+          {rootLeaves.map((leaf) => (
+            <MobileMenuLeaf key={leaf.idMenu} item={leaf} onNavigate={onNavigate} />
+          ))}
+        </div>
+      )}
+      {groups.map((node) => (
+        <MobileMenuGroup key={node.item.idMenu} node={node} onNavigate={onNavigate} />
+      ))}
+    </div>
+  )
+}
+
+function MobileMenuGroup({ node, onNavigate }: { node: MenuTreeNode; onNavigate: () => void }) {
+  const item = node.item
+  if (isLeaf(item)) return null
+
+  const leaves = collectLeafMenus(node)
+  if (leaves.length === 0) return null
+
+  return (
+    <section>
+      <h3 className="mb-2 flex items-center gap-2 px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        {item.icon && <i className={`${item.icon} text-sm`} aria-hidden />}
+        {item.label}
+      </h3>
+      <div className="grid grid-cols-3 gap-2">
+        {leaves.map((leaf) => (
+          <MobileMenuLeaf key={leaf.idMenu} item={leaf} onNavigate={onNavigate} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function MobileMenuLeaf({ item, onNavigate }: { item: MenuItemDefinition; onNavigate: () => void }) {
+  const navigate = useNavigate()
+  const parsed = parseMenuUrl(item.url ?? '')
+
+  function handleClick() {
+    if (parsed.external && parsed.href) {
+      window.open(parsed.href, '_blank', 'noopener,noreferrer')
+      onNavigate()
+      return
+    }
+    if (!parsed.screen) return
+    navigateToParsedMenu(navigate, parsed)
+    onNavigate()
+  }
+
+  return (
+    <MobilePanelCard
+      icon={item.icon ?? 'bi bi-circle'}
+      label={item.label}
+      onClick={handleClick}
+    />
+  )
+}
+
+function collectLeafMenus(node: MenuTreeNode): MenuItemDefinition[] {
+  if (isLeaf(node.item)) return [node.item]
+  return node.children.flatMap(collectLeafMenus)
+}
+
+function MobilePanelEmpty({ loading }: { loading: boolean }) {
+  return (
+    <div className="px-4 py-12 text-center text-sm text-slate-500">
+      {loading ? (
+        <>
+          <span className="mx-auto mb-3 block h-7 w-7 animate-spin rounded-full border-4 border-blue-700 border-t-transparent" />
+          Carregando menus...
+        </>
+      ) : (
+        <>
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-700 ring-1 ring-blue-100">
+            <i className="bi bi-grid" aria-hidden />
+          </div>
+          <p className="mt-3 font-semibold text-slate-800">Nenhum menu disponivel</p>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -297,7 +569,7 @@ interface MenuTreeNode {
  * Suporte a profundidade ilimitada.
  */
 function buildMenuTree(menus: MenuItemDefinition[]): MenuTreeNode[] {
-  const sorted = [...menus].sort((a, b) => (a.orderview ?? 0) - (b.orderview ?? 0))
+  const sorted = sortMenusByModuleOrder(menus)
   const labelSet = new Set(sorted.map((m) => m.label))
 
   // Raízes: sem parentmenu ou parentmenu não bate com nenhum label existente
@@ -430,11 +702,14 @@ function FlyoutMenuItem({
   const isActive = (activeScreen ?? 'home') === parsed.screen
 
   function handleClick() {
-    if (parsed.params) {
-      navigate(`/home/${parsed.screen}`, { state: { initialParams: parsed.params } })
-    } else {
-      navigate(`/home/${parsed.screen}`)
+    const staticRoute = STATIC_SCREEN_ROUTES[parsed.screen ?? '']
+    if (staticRoute) {
+      navigate(`${staticRoute}${parsed.search ?? ''}`, parsed.params ? { state: { initialParams: parsed.params } } : undefined)
+      onNavigate()
+      return
     }
+
+    navigate(`/home/${parsed.screen}${parsed.search ?? ''}`, parsed.params ? { state: { initialParams: parsed.params } } : undefined)
     onNavigate()
   }
 

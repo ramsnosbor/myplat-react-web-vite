@@ -4,10 +4,14 @@ import { useQueryClient, useMutation } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useViewContext } from '../ViewContext'
 import { useConnectionParams, useConnectionEnabled } from '../ObjectRenderer'
+import { useAuthStore } from '@/store/authStore'
 import { useEntityQuery } from '@/hooks/useEntityQuery'
 import { entityApi } from '@/api/entity.api'
 import { scriptApi } from '@/api/script.api'
+import { apiClient, nfeClient } from '@/api/client'
+import { resolveTemplate, interpolateExpr } from '@/utils/evalExpr'
 import { useToast } from '@/components/ui/Toast'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 import type { ObjectDefinition, ComponentDefinition, ComponentAction } from '@/types/view.types'
 import { interpolate } from '@/utils/interpolate'
 import { evalExpr } from '@/utils/evalExpr'
@@ -45,6 +49,8 @@ export function TableObject({ objectDef }: Props) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const toast = useToast()
+  const { confirm, confirmDialog } = useConfirm()
+  const tenantCode = useAuthStore((s) => s.tenant?.code ?? '')
 
   // Mapa id→entity: nos objetos/componentes "entity" guarda o entities[].id,
   // mas a API recebe o entities[].entity (que pode diferir do id).
@@ -53,6 +59,10 @@ export function TableObject({ objectDef }: Props) {
     entityMap[e.id] = e.entity ?? e.id
   }
   const entityName = entityMap[objectDef.entity] ?? objectDef.entity
+
+  // orderBy declarado na EntityNode (fallback quando o objeto não tem orderBy próprio)
+  const entityNode = definition.entities.find((e) => e.id === objectDef.entity)
+  const entityOrderBy = entityNode?.orderBy
 
   const connectionParams = useConnectionParams(objectDef.id)
   const enabled = useConnectionEnabled(objectDef.id)
@@ -104,10 +114,10 @@ export function TableObject({ objectDef }: Props) {
     }
   }
 
-  // orderBy: sort do usuário tem prioridade; fallback para objectDef.orderBy
+  // orderBy: sort do usuário > objectDef.orderBy > entity.orderBy
   const effectiveOrderBy = sortField
     ? `${sortField},${sortDir}`
-    : (objectDef.orderBy ?? undefined)
+    : (objectDef.orderBy ?? entityOrderBy ?? undefined)
 
   const tableHeight = TABLE_HEIGHT_OPTIONS.find((option) => option.value === heightMode)
   const tableScrollStyle: React.CSSProperties = tableHeight?.maxHeight
@@ -177,7 +187,7 @@ export function TableObject({ objectDef }: Props) {
 
   // Handler de ação por linha
   const handleRowAction = useCallback(
-    (action: ComponentAction, row: EntityRecord) => {
+    async (action: ComponentAction, row: EntityRecord) => {
       try {
       switch (action.action) {
         case 'edit':
@@ -207,8 +217,9 @@ export function TableObject({ objectDef }: Props) {
               queryParams: searchParams,
             })
           } else if (action.url) {
-            // Objeto não existe na view ou está vazio + tem URL → navega para outra tela
-            navigate(`/home/${action.url}`, { state: { searchParams, mode: targetMode } })
+            // Interpola {{campo}} no URL usando initialParams + dados da linha
+            const interpolatedUrl = interpolate(action.url, { ...initialParams, ...row })
+            navigate(`/home/${interpolatedUrl}`, { state: { searchParams, mode: targetMode } })
           } else if (!targetId) {
             // Sem objeto e sem URL → aciona filhos via connections
             const childConnections = connections.filter((c) => c.parent === objectDef.id)
@@ -219,17 +230,59 @@ export function TableObject({ objectDef }: Props) {
           break
         }
         case 'delete': {
-          const primaryKey = objectDef.primaryKey ?? 'id'
-          const id = row[primaryKey] as string | number
-          const confirmation = action.confirmation ?? 'Confirmar exclusão?'
-          if (id && window.confirm(confirmation)) {
-            deleteMutation.mutate(
-              { entity: entityName, id },
-              {
-                onSuccess: () => toast.success('Registro excluído.'),
-                onError: () => toast.error('Erro ao excluir.'),
-              },
-            )
+          // Entidade real pode diferir da view usada na tabela (ex: tabela exibe v_lancamento_gerencial
+          // mas o DELETE vai para lancamento_gerencial). Usa action.params[0].entity como override.
+          const deleteEntity = action.params?.[0]?.entity ?? entityName
+          // ID vem do campo indicado em params.sourceKey (ou params.key), não do objectDef.primaryKey
+          const pkField = action.params?.[0]?.sourceKey ?? action.params?.[0]?.key ?? objectDef.primaryKey ?? 'id'
+          const id = row[pkField] as string | number
+          const confirmation = action.confirmation ?? 'Deseja realmente excluir este registro?'
+          if (id && await confirm(confirmation)) {
+            entityApi.remove(deleteEntity, id)
+              .then(() => {
+                toast.success('Registro excluído.')
+                // Invalida a entidade da tabela (view)
+                queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
+                // Invalida entidades declaradas na action
+                for (const e of action.affectedEntities ?? []) {
+                  queryClient.invalidateQueries({ queryKey: ['entity', e] })
+                }
+                // Executa actions pós-delete (ex: confirmarTesouraria, verificarStatusFinanceiro)
+                for (const postAction of action.actions ?? []) {
+                  if (postAction.action !== 'executeScript') continue
+                  const scriptId = postAction.script ?? postAction.scriptId ?? ''
+                  if (!scriptId) continue
+                  const resolvedCustomParams: Record<string, unknown> = {}
+                  for (const [key, val] of Object.entries(postAction.customParams ?? {})) {
+                    resolvedCustomParams[key] = typeof val === 'string' && val.includes('{{')
+                      ? interpolateExpr(val, { ...screenParams, ...(initialParams ?? {}) })
+                      : val
+                  }
+                  // inputs: chaves mapeadas pelos params + rowData: linha completa excluída
+                  const scriptInputs: Record<string, unknown> = {}
+                  for (const p of action.params ?? []) {
+                    scriptInputs[p.key] = row[p.sourceKey ?? p.key]
+                  }
+                  scriptApi.execute(scriptId, {
+                    inputs: scriptInputs,
+                    rowData: row,
+                    customParams: resolvedCustomParams,
+                  }).then((result) => {
+                    if (result.messageError) toast.error(result.messageError)
+                    else if (result.message) toast.success(result.message)
+                    for (const e of result.affectedEntities ?? []) {
+                      queryClient.invalidateQueries({ queryKey: ['entity', e] })
+                    }
+                    for (const e of postAction.affectedEntities ?? []) {
+                      queryClient.invalidateQueries({ queryKey: ['entity', e] })
+                    }
+                    if (result.reload || postAction.reloadAfterAction) {
+                      queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
+                    }
+                  }).catch(() => {})
+                }
+              })
+              .catch(() => toast.error('Erro ao excluir.'))
           }
           break
         }
@@ -253,19 +306,30 @@ export function TableObject({ objectDef }: Props) {
           for (const p of action.params ?? []) {
             inputs[p.key] = row[p.sourceKey ?? p.key]
           }
-          scriptApi.execute(scriptId, inputs).then((result) => {
+          // Resolve customParams estáticos contra screenParams + initialParams (suporta {{PARAM}})
+          const resolvedCustomParams: Record<string, unknown> = {}
+          for (const [key, val] of Object.entries(action.customParams ?? {})) {
+            resolvedCustomParams[key] = val.includes('{{')
+              ? interpolateExpr(val, { ...screenParams, ...(initialParams ?? {}) })
+              : val
+          }
+          scriptApi.execute(scriptId, { inputs, customParams: resolvedCustomParams }).then((result) => {
             if (result.messageError) {
               toast.error(result.messageError)
             } else if (result.message) {
               toast.success(result.message)
             }
-            if (result.reload) {
+            // Recarrega entidade atual se o script pediu OU se a action configurou
+            if (result.reload || action.reloadAfterAction) {
               queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
             }
-            if (result.affectedEntities) {
-              for (const e of result.affectedEntities) {
-                queryClient.invalidateQueries({ queryKey: ['entity', e] })
-              }
+            // Invalida entidades retornadas pelo script
+            for (const e of result.affectedEntities ?? []) {
+              queryClient.invalidateQueries({ queryKey: ['entity', e] })
+            }
+            // Invalida entidades declaradas na action do JSON
+            for (const e of action.affectedEntities ?? []) {
+              queryClient.invalidateQueries({ queryKey: ['entity', e] })
             }
           }).catch((err) => {
             const msg = (err as { response?: { data?: { messageError?: string } } })
@@ -274,6 +338,66 @@ export function TableObject({ objectDef }: Props) {
           })
           break
         }
+        case 'downloadNfe':
+        case 'generateNfe': {
+          const template = action.actionParams?.fileName
+          if (!template) { toast.error('downloadNfe: actionParams.fileName não definido'); break }
+          const fileName = resolveTemplate(template, row as Record<string, unknown>)
+          if (!fileName) { toast.error('Não foi possível resolver o nome do arquivo'); break }
+          const dlParams: Record<string, string> = {}
+          for (const [key, val] of Object.entries(action.actionParams ?? {})) {
+            if (key === 'fileName' || typeof val !== 'string') continue
+            const resolved = resolveTemplate(val, row as Record<string, unknown>)
+            if (resolved) dlParams[key] = resolved
+          }
+          nfeClient
+            .get(`/danfe/download/${encodeURIComponent(fileName)}`, {
+              params: dlParams,
+              responseType: 'blob',
+              headers: { 'X-Tenant-Id': tenantCode },
+            })
+            .then((resp) => {
+              const blob = new Blob([resp.data as BlobPart])
+              const url = window.URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url; a.download = fileName
+              document.body.appendChild(a); a.click(); a.remove()
+              window.URL.revokeObjectURL(url)
+            })
+            .catch((err: unknown) => toast.error((err as { message?: string })?.message ?? 'Erro ao baixar arquivo'))
+          break
+        }
+
+        case 'generateReport': {
+          const reportName = action.actionParams?.reportName
+          if (!reportName) { toast.error('generateReport: actionParams.reportName não definido'); break }
+          const docType = action.actionParams?.docType ?? 'pdf'
+          const filters: Record<string, unknown> = {}
+          const rawFilters = action.actionParams?.filters
+          if (rawFilters && typeof rawFilters === 'object') {
+            for (const [key, val] of Object.entries(rawFilters)) {
+              if (typeof val === 'string') {
+                const resolved = resolveTemplate(val, row as Record<string, unknown>)
+                if (resolved !== '') filters[key] = resolved
+              } else { filters[key] = val }
+            }
+          }
+          apiClient
+            .post('/api/reports/generate', { reportName, docType, filters })
+            .then((resp) => {
+              const data = resp.data as string | Record<string, unknown>
+              const generatedFileName = typeof data === 'string' ? data : (data?.name ?? data?.fileName ?? data?.filename ?? null)
+              if (!generatedFileName) { toast.error('Nome do arquivo gerado não retornado'); return }
+              navigate('/report-viewer', { state: { fileName: generatedFileName, reportName, docType } })
+            })
+            .catch((err: unknown) => {
+              const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+                ?? (err as { message?: string })?.message ?? 'Erro ao gerar relatório'
+              toast.error(msg)
+            })
+          break
+        }
+
         default:
           console.warn('[TableObject] Ação não suportada:', action.action)
       }
@@ -281,7 +405,7 @@ export function TableObject({ objectDef }: Props) {
         console.error('[TableObject] Erro em handleRowAction:', err)
       }
     },
-    [objectDef, connections, definition, setObjectState, deleteMutation, navigate],
+    [objectDef, connections, definition, setObjectState, deleteMutation, navigate, toast, tenantCode],
   )
 
   // Handler de generalActions
@@ -318,12 +442,23 @@ export function TableObject({ objectDef }: Props) {
         case 'executeScript': {
           const scriptId = action.script ?? action.scriptId ?? ''
           if (!scriptId) break
-          scriptApi.execute(scriptId, { entity: entityName, params: queryParams })
+          const gaCustomParams: Record<string, unknown> = {}
+          for (const [key, val] of Object.entries(action.customParams ?? {})) {
+            gaCustomParams[key] = val.includes('{{')
+              ? interpolateExpr(val, { ...screenParams, ...(initialParams ?? {}) })
+              : val
+          }
+          scriptApi.execute(scriptId, { entity: entityName, params: queryParams, customParams: gaCustomParams })
             .then((result) => {
               if (result.messageError) toast.error(result.messageError)
               else if (result.message) toast.success(result.message)
-              if (result.reload) queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
+              if (result.reload || action.reloadAfterAction) {
+                queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
+              }
               for (const e of result.affectedEntities ?? []) {
+                queryClient.invalidateQueries({ queryKey: ['entity', e] })
+              }
+              for (const e of action.affectedEntities ?? []) {
                 queryClient.invalidateQueries({ queryKey: ['entity', e] })
               }
             })
@@ -353,6 +488,7 @@ export function TableObject({ objectDef }: Props) {
 
   return (
     <div style={objectDef.style as React.CSSProperties}>
+      {confirmDialog}
       {/* Header: título + generalActions */}
       {false && (objectDef.title || generalActions.length > 0) && (
         <div className="mb-2 flex items-center justify-between gap-2">
@@ -390,9 +526,23 @@ export function TableObject({ objectDef }: Props) {
           <TableSettingsButton
             mode={heightMode}
             open={settingsOpen}
+            columns={dataColumns}
+            sortField={sortField}
+            sortDir={sortDir}
             onToggle={() => setSettingsOpen((open) => !open)}
-            onSelect={(mode) => {
+            onHeightSelect={(mode) => {
               setHeightMode(mode)
+              setSettingsOpen(false)
+            }}
+            onSortSelect={(field, dir) => {
+              setPageNumber(1)
+              setSortField(field)
+              setSortDir(dir)
+              setSettingsOpen(false)
+            }}
+            onSortClear={() => {
+              setPageNumber(1)
+              setSortField(null)
               setSettingsOpen(false)
             }}
           />
@@ -418,7 +568,7 @@ export function TableObject({ objectDef }: Props) {
         <>
           <div
             className={[
-              'overflow-auto rounded-md border border-border',
+              'hidden overflow-auto rounded-md border border-border md:block',
               heightMode === 'infinite' ? '' : 'overscroll-contain',
             ].join(' ')}
             style={tableScrollStyle}
@@ -531,6 +681,31 @@ export function TableObject({ objectDef }: Props) {
           </div>
 
           {/* Paginação — sempre visível quando há dados */}
+          <div className="space-y-2 md:hidden">
+            {rows.length === 0 ? (
+              <div className="rounded-md border border-border bg-card px-3 py-8 text-center">
+                <TableEmptyState message={typeof objectDef.emptyState === 'string' ? objectDef.emptyState : 'Nenhum registro encontrado.'} />
+              </div>
+            ) : (
+              rows.map((row, ri) => {
+                const isSelected = objectState?.selectedRow === row
+                const rowStyle = getStatusColor(row, objectDef.statusColors)
+                return (
+                  <TableMobileCard
+                    key={ri}
+                    row={row}
+                    dataColumns={dataColumns}
+                    actionColumns={actionColumns}
+                    selected={isSelected}
+                    style={rowStyle}
+                    onSelect={() => setObjectState(objectDef.id, { selectedRow: row })}
+                    onAction={handleRowAction}
+                  />
+                )
+              })
+            )}
+          </div>
+
           {rows.length > 0 && (
             <div className="mt-2 flex items-center justify-between gap-4 text-xs text-muted-foreground">
               {/* Esquerda: contador + seletor de itens por página */}
@@ -587,11 +762,105 @@ const GA_VARIANT: Record<string, string> = {
   'outline-danger':  'border border-destructive text-destructive hover:bg-destructive/10',
 }
 
+interface TableMobileCardProps {
+  row: EntityRecord
+  dataColumns: ComponentDefinition[]
+  actionColumns: ComponentDefinition[]
+  selected: boolean
+  style?: React.CSSProperties
+  onSelect: () => void
+  onAction: (action: ComponentAction, row: EntityRecord) => void
+}
+
+function TableMobileCard({
+  row,
+  dataColumns,
+  actionColumns,
+  selected,
+  style,
+  onSelect,
+  onAction,
+}: TableMobileCardProps) {
+  const titleColumn = dataColumns[0]
+  const detailColumns = dataColumns.slice(1)
+  const title = titleColumn ? renderMobileCell(titleColumn, row) : null
+
+  return (
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') onSelect()
+      }}
+      style={style}
+      className={[
+        'rounded-lg border bg-card p-3 shadow-sm transition-colors',
+        selected ? 'border-primary ring-2 ring-primary/15' : 'border-border',
+        style ? '' : 'hover:border-primary/30',
+      ].join(' ')}
+    >
+      {titleColumn && (
+        <div className="mb-2 min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {titleColumn.title ?? titleColumn.label ?? titleColumn.name}
+          </p>
+          <div className="mt-0.5 truncate text-sm font-semibold text-foreground">
+            {title}
+          </div>
+        </div>
+      )}
+
+      {detailColumns.length > 0 && (
+        <dl className="grid grid-cols-1 gap-2">
+          {detailColumns.map((col) => {
+            const isNumeric = NUMERIC_TYPES.has(col.type)
+            return (
+              <div key={col.idComponent ?? col.name} className="grid grid-cols-[42%_1fr] gap-2 border-t border-border/70 pt-2">
+                <dt className="min-w-0 truncate text-xs font-medium text-muted-foreground">
+                  {col.title ?? col.label ?? col.name}
+                </dt>
+                <dd className={`min-w-0 text-xs text-foreground ${isNumeric ? 'text-right tabular-nums' : 'text-left'}`}>
+                  <span className="break-words">{renderMobileCell(col, row)}</span>
+                </dd>
+              </div>
+            )
+          })}
+        </dl>
+      )}
+
+      {actionColumns.length > 0 && (
+        <div className="mt-3 flex flex-wrap justify-end gap-1.5 border-t border-border/70 pt-2">
+          {actionColumns.flatMap((col) => col.actions ?? []).map((action, index) => (
+            <ActionButton
+              key={`${action.action}-${action.name ?? action.title ?? index}`}
+              action={action}
+              row={row}
+              onAction={onAction}
+            />
+          ))}
+        </div>
+      )}
+    </article>
+  )
+}
+
+function renderMobileCell(col: ComponentDefinition, row: EntityRecord) {
+  return col.type === 'template' || col.template
+    ? renderTemplate(col.template ?? '', row)
+    : formatCell(row[col.name], col)
+}
+
 interface TableSettingsButtonProps {
   mode: TableHeightMode
   open: boolean
+  columns: ComponentDefinition[]
+  sortField: string | null
+  sortDir: 'asc' | 'desc'
   onToggle: () => void
-  onSelect: (mode: TableHeightMode) => void
+  onHeightSelect: (mode: TableHeightMode) => void
+  onSortSelect: (field: string, dir: 'asc' | 'desc') => void
+  onSortClear: () => void
 }
 
 function TableEmptyState({ message }: { message: string }) {
@@ -608,14 +877,24 @@ function TableEmptyState({ message }: { message: string }) {
   )
 }
 
-function TableSettingsButton({ mode, open, onToggle, onSelect }: TableSettingsButtonProps) {
-  const current = TABLE_HEIGHT_OPTIONS.find((option) => option.value === mode)
+function TableSettingsButton({
+  mode,
+  open,
+  columns,
+  sortField,
+  sortDir,
+  onToggle,
+  onHeightSelect,
+  onSortSelect,
+  onSortClear,
+}: TableSettingsButtonProps) {
+  const sortableColumns = columns.filter((column) => column.name)
 
   return (
     <div className="relative">
       <button
         type="button"
-        title={`Altura da tabela: ${current?.label ?? 'Normal'}`}
+        title="Configuracoes da tabela"
         onClick={onToggle}
         className={[
           'flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground transition-colors',
@@ -626,7 +905,7 @@ function TableSettingsButton({ mode, open, onToggle, onSelect }: TableSettingsBu
       </button>
 
       {open && (
-        <div className="absolute right-0 top-9 z-30 w-56 overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-xl">
+        <div className="absolute right-0 top-9 z-30 max-h-[70vh] w-72 overflow-y-auto rounded-md border border-border bg-popover text-popover-foreground shadow-xl">
           <div className="border-b border-border px-3 py-2 text-xs font-semibold text-muted-foreground">
             Altura da tabela
           </div>
@@ -636,7 +915,7 @@ function TableSettingsButton({ mode, open, onToggle, onSelect }: TableSettingsBu
               <button
                 key={option.value}
                 type="button"
-                onClick={() => onSelect(option.value)}
+                onClick={() => onHeightSelect(option.value)}
                 className={[
                   'flex w-full items-center gap-2 px-3 py-2 text-left transition-colors',
                   active ? 'bg-primary/10 text-primary' : 'hover:bg-muted',
@@ -650,6 +929,58 @@ function TableSettingsButton({ mode, open, onToggle, onSelect }: TableSettingsBu
                   <span className="block text-xs text-muted-foreground">{option.description}</span>
                 </span>
               </button>
+            )
+          })}
+
+          <div className="border-y border-border px-3 py-2 text-xs font-semibold text-muted-foreground">
+            Ordenar por
+          </div>
+          <button
+            type="button"
+            onClick={onSortClear}
+            className={[
+              'flex w-full items-center gap-2 px-3 py-2 text-left transition-colors',
+              !sortField ? 'bg-primary/10 text-primary' : 'hover:bg-muted',
+            ].join(' ')}
+          >
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+              {!sortField && <i className="bi bi-check2 text-sm" aria-hidden />}
+            </span>
+            <span className="text-sm font-medium">Sem ordenacao</span>
+          </button>
+
+          {sortableColumns.map((column) => {
+            const label = column.title ?? column.label ?? column.name
+            const activeAsc = sortField === column.name && sortDir === 'asc'
+            const activeDesc = sortField === column.name && sortDir === 'desc'
+            return (
+              <div key={column.idComponent ?? column.name} className="border-t border-border/60 px-3 py-2">
+                <div className="mb-1 truncate text-xs font-medium text-foreground">{label}</div>
+                <div className="grid grid-cols-2 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onSortSelect(column.name, 'asc')}
+                    className={[
+                      'inline-flex h-8 items-center justify-center gap-1 rounded-md border px-2 text-xs font-medium transition-colors',
+                      activeAsc ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted',
+                    ].join(' ')}
+                  >
+                    <i className="bi bi-arrow-up" aria-hidden />
+                    Cresc.
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onSortSelect(column.name, 'desc')}
+                    className={[
+                      'inline-flex h-8 items-center justify-center gap-1 rounded-md border px-2 text-xs font-medium transition-colors',
+                      activeDesc ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted',
+                    ].join(' ')}
+                  >
+                    <i className="bi bi-arrow-down" aria-hidden />
+                    Decresc.
+                  </button>
+                </div>
+              </div>
             )
           })}
         </div>
