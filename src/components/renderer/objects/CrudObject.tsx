@@ -4,7 +4,7 @@ import { useForm, useWatch } from 'react-hook-form'
 import { useStore } from 'zustand'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useViewContext } from '../ViewContext'
-import { useConnectionParams } from '../ObjectRenderer'
+import { useConnectionParams, useParentIsCreating } from '../ObjectRenderer'
 import { FieldRenderer } from '../fields/FieldRenderer'
 import { entityApi } from '@/api/entity.api'
 import type { EntitySchemaResponse } from '@/api/entity.api'
@@ -54,8 +54,21 @@ export function CrudObject({ objectDef }: Props) {
   })
 
   const connectionParams = useConnectionParams(objectDef.id)
+  const parentIsCreating = useParentIsCreating(objectDef.id)
 
   const qp = objectState?.queryParams
+
+  // Tipos que são apenas display — não são inputs, não vão no body
+  const DISPLAY_TYPES = new Set(['label', 'title', 'html', 'template', 'generalActions'])
+
+  // Keys que têm um componente de input explícito neste objeto → nunca são transient,
+  // mesmo que estejam em initialParams (ex: id_pessoa passado pela URL mas também FK do filho)
+  const explicitInputKeys = new Set(
+    (objectDef.components ?? [])
+      .filter((c) => !DISPLAY_TYPES.has(c.type) && !c.transient)
+      .map((c) => c.nameForm ?? c.name)
+      .filter(Boolean),
+  )
 
   // ─── Filtro para carregar o registro ─────────────────────────────────────────
   // Prioridade:
@@ -78,13 +91,18 @@ export function CrudObject({ objectDef }: Props) {
     if (cpEntries.length > 0) return Object.fromEntries(cpEntries)
 
     // 3. initialParams de navegação (ex: URL ?id_financeiro=8)
-    // Preferimos chaves que começam com "id_" para evitar que params de contexto
-    // como "tipo_nfe" entrem como filtro da API.
+    // Usa APENAS chaves que começam com "id_" para evitar que params de contexto
+    // como "tipo_nfe" entrem como filtro da API e causem inferência errada de modo.
+    // Ex: /crudMovimento?tipo_nfe=Orcamento → não deve ser tratado como loadFilter.
+    // Quando há múltiplos id_*, prefere os que pertencem explicitamente a este CRUD
+    // (estão em explicitInputKeys) para evitar que IDs de entidades irmãs contaminem
+    // a query. Ex: crudPessoa com initialParams { id_pessoa, id_residente } → usa só id_pessoa.
     const ip = initialParams as Record<string, unknown>
-    const allIpEntries = Object.entries(ip).filter(([k, v]) => k !== '_mode' && isValid(v))
-    const idIpEntries  = allIpEntries.filter(([k]) => k.startsWith('id_'))
-    const ipEntries    = idIpEntries.length > 0 ? idIpEntries : allIpEntries
-    if (ipEntries.length > 0) return Object.fromEntries(ipEntries)
+    const idIpEntries = Object.entries(ip).filter(([k, v]) => k.startsWith('id_') && isValid(v))
+    if (idIpEntries.length > 0) {
+      const ownedEntries = idIpEntries.filter(([k]) => explicitInputKeys.has(k))
+      return Object.fromEntries(ownedEntries.length > 0 ? ownedEntries : idIpEntries)
+    }
 
     // 4. selectedRow como último recurso (ex: connection pai→filho sem queryParams explícito)
     const sr = objectState?.selectedRow
@@ -133,7 +151,9 @@ export function CrudObject({ objectDef }: Props) {
   })
 
   const form = useForm<Record<string, unknown>>({
-    defaultValues: { ...initialParams, ...buildDefaultValues(objectDef, initialParams) },
+    // Em create: aplica defaultValue de cada componente, initialParams ganha.
+    // Em edit/detail: campos iniciam vazios; os valores reais vêm do form.reset(record).
+    defaultValues: { ...buildDefaultValues(objectDef, initialParams, isCreate), ...initialParams },
   })
 
   const watchedValues = useWatch({ control: form.control }) as Record<string, unknown>
@@ -149,7 +169,13 @@ export function CrudObject({ objectDef }: Props) {
   useEffect(() => {
     if (Object.keys(watchedValues).length > 0) {
       const currentFormData = (viewStore.getState().objects[objectDef.id]?.formData ?? {}) as Record<string, unknown>
-      setObjectState(objectDef.id, { formData: { ...currentFormData, ...watchedValues } })
+      // Merge order: computedOverrides < watchedValues
+      //   - computedOverrides cobre campos virtuais (computedName sem nameForm, ex: destinoDaOperacao)
+      //     que não chegam ao watchedValues por não serem registrados no form, mas precisam estar
+      //     no globalFormData para que autocompletes filhos possam usar {{destinoDaOperacao}}.
+      //   - watchedValues vence sobre computedOverrides: campos com nameForm (ex: id_tipo_nota)
+      //     usam o valor do banco após form.reset(), não o valor recalculado no render.
+      setObjectState(objectDef.id, { formData: { ...currentFormData, ...computedOverrides, ...watchedValues } })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(watchedValues)])
@@ -191,17 +217,58 @@ export function CrudObject({ objectDef }: Props) {
           : undefined
       if (result === undefined) continue
       const current = form.getValues(targetField)
-      // Em modo edit com registro carregado, não sobrescreve valores existentes do banco
-      if (!isCreate && record && current !== undefined && current !== '' && current !== null) continue
+      // computedFrom: campo virtual/derivado — em edit, só aplica se ainda não há valor salvo.
+      // expression: cálculo aritmético (ex: qt * vl_unitario) — sempre recalcula,
+      // pois o usuário pode ter alterado um campo dependente e o total deve atualizar.
+      if (comp.computedFrom && !isCreate && record && current !== undefined && current !== '' && current !== null) continue
       if (String(result) !== String(current ?? '')) {
-        form.setValue(targetField, result, { shouldDirty: true })
+        // shouldDirty: false — campo computado não deve ser marcado como "alterado pelo usuário".
+        // O cascade do AutocompleteField usa isDirty para distinguir alteração real do usuário
+        // (deve limpar filho) de mudança sistêmica/init (não deve limpar).
+        form.setValue(targetField, result, { shouldDirty: false })
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(rawFormValues)])
 
 
-  const baseDefaults = () => ({ ...initialParams, ...buildDefaultValues(objectDef, initialParams) })
+  // Defaults para CREATE: aplica defaultValue + initialParams (URL)
+  const baseDefaults = () => ({ ...buildDefaultValues(objectDef, initialParams, true), ...initialParams })
+
+  // Propaga mode: 'create' para o viewStore quando o CRUD raiz abre sem registro.
+  // Necessário para que useConnectionEnabled dos filhos veja o mode correto e desabilite
+  // seus botões. Sem isso, os filhos veem mode=null + formData.id_*="0" (defaultValue)
+  // e consideram o pai "habilitado", mostrando botões incorretamente.
+  useEffect(() => {
+    if (isCreate && !objectState?.mode) {
+      setObjectState(objectDef.id, { mode: 'create' })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCreate])
+
+  // Auto-detecta mode para objetos filhos conectados via connectionParams:
+  // Se o pai propagou um ID mas a entidade filha não tem registro (ainda não foi criado),
+  // muda automaticamente para 'create'. Assim o filho age como um "sub-formulário de criação"
+  // vinculado ao pai, em vez de travar em detail/edit sem dados para exibir.
+  //
+  // Exemplo: CRUDMovimento (edit) → tab Transporte (movimento_transporte não existe ainda)
+  //   → connectionParams = { id_movimento: 5 } → entityId = 5 → query retorna undefined
+  //   → auto-muda para create (form limpo com id_movimento=5 nos defaults)
+  //
+  // Não interfere quando:
+  //   - modo foi explicitamente definido pelo usuário (storeMode = 'edit' após salvar)
+  //   - o registro existe (record !== undefined)
+  //   - a query ainda está carregando
+  useEffect(() => {
+    if (isCreate || isLoadingRecord || !entityId || record !== undefined) return
+    const explicitMode = objectState?.mode
+    // Só auto-muda se o modo não foi definido explicitamente (null/undefined = inferido)
+    // ou se ainda está no modo inferido 'detail'/'edit' sem registro encontrado
+    if (!explicitMode || explicitMode === 'detail' || explicitMode === 'edit') {
+      setObjectState(objectDef.id, { mode: 'create' })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoadingRecord, record, entityId])
 
   // Preenche o form quando o registro carrega ou o ID muda
   useEffect(() => {
@@ -214,8 +281,16 @@ export function CrudObject({ objectDef }: Props) {
       const normalizedRecord = Object.fromEntries(
         Object.entries(record as Record<string, unknown>).map(([k, v]) => [k, normalizeDatetimeForInput(v)])
       )
-      form.reset({ ...baseDefaults(), ...normalizedRecord })
-      setObjectState(objectDef.id, { formData: record as Record<string, unknown> })
+      // Edit/detail: campos iniciam vazios (sem defaultValue), initialParams preservados,
+      // valores atuais do form preservados para campos que NÃO vêm da API principal
+      // (ex: cd_modelo_documento vem da tabela série via autocomplete fields copy, não do movimento).
+      // Os valores do registro (normalizedRecord) sempre ganham dos demais.
+      form.reset({ ...buildDefaultValues(objectDef, initialParams, false), ...initialParams, ...form.getValues(), ...normalizedRecord })
+      // Inclui computedOverrides para que campos virtuais (computedName sem nameForm, ex: destinoDaOperacao)
+      // não sejam perdidos quando o record do banco sobrescreve o formData. Esses campos não entram
+      // em watchedValues (não são registrados no form), então o effect de watchedValues não os restaura
+      // se o record tiver os mesmos valores que o form já tinha (JSON.stringify igual → effect não roda).
+      setObjectState(objectDef.id, { formData: { ...(record as Record<string, unknown>), ...computedOverrides } })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [record, entityId, isCreate])
@@ -337,7 +412,7 @@ export function CrudObject({ objectDef }: Props) {
               ? interpolateExpr(val, { ...screenParams, ...newRecord })
               : val
           }
-          scriptApi.execute(hook.name, {
+          scriptApi.execute(hook.name ?? hook.scriptId ?? hook.script, {
             data: [],
             inputs: newRecord,
             formData: newRecord,
@@ -396,12 +471,16 @@ export function CrudObject({ objectDef }: Props) {
             return
           }
 
-          form.reset({ ...buildDefaultValues(objectDef, initialParams), ...newRecord })
+          const resetValues = { ...buildDefaultValues(objectDef, initialParams, false), ...initialParams, ...form.getValues(), ...newRecord }
+          form.reset(resetValues)
 
+          // Inclui todos os valores do form + computedOverrides no formData imediatamente,
+          // evitando janela onde campos computados (tipo_nfe, destinoDaOperacao, etc.)
+          // ficam ausentes do globalFormData antes do effect de watchedValues disparar.
           setObjectState(objectDef.id, {
             mode: 'edit',
             queryParams: { [primary]: pkValue },
-            formData: newRecord,
+            formData: { ...computedOverrides, ...resetValues },
             selectedRow: newRecord,
           })
         } else {
@@ -411,7 +490,7 @@ export function CrudObject({ objectDef }: Props) {
       } else if (after === 'detail') {
         setObjectState(objectDef.id, { mode: 'detail' })
       } else if (after === 'create') {
-        form.reset(buildDefaultValues(objectDef, initialParams))
+        form.reset({ ...buildDefaultValues(objectDef, initialParams, true), ...initialParams })
         // Limpa queryParams também para garantir que o próximo create não herde o ID anterior
         setObjectState(objectDef.id, { mode: 'create', formData: null, selectedRow: null, queryParams: {} })
       } else if (objectDef.variant === 'modal') {
@@ -429,18 +508,6 @@ export function CrudObject({ objectDef }: Props) {
     },
   })
 
-  // Tipos que são apenas display — não são inputs, não vão no body
-  const DISPLAY_TYPES = new Set(['label', 'title', 'html', 'template', 'generalActions'])
-
-  // Keys que têm um componente de input explícito neste objeto → nunca são transient,
-  // mesmo que estejam em initialParams (ex: id_pessoa passado pela URL mas também FK do filho)
-  const explicitInputKeys = new Set(
-    (objectDef.components ?? [])
-      .filter((c) => !DISPLAY_TYPES.has(c.type) && !c.transient)
-      .map((c) => c.nameForm ?? c.name)
-      .filter(Boolean),
-  )
-
   const transientKeys = new Set([
     // Params de navegação da URL — exceto os que têm componente de input explícito
     ...Object.keys(initialParams).filter((k) => !explicitInputKeys.has(k)),
@@ -448,11 +515,32 @@ export function CrudObject({ objectDef }: Props) {
       const keys: string[] = []
       const fieldKey = c.nameForm ?? c.name
       // Explicitamente marcado como transient
-      if (c.transient) keys.push(fieldKey)
+      if (c.transient) {
+        // Só marca fieldKey como transient se nenhum outro componente real (não-transient,
+        // não-display) usar o mesmo nameForm. Evita excluir campos reais cujo nameForm
+        // coincide com o de um autocomplete transient (ex: ambos com nameForm "descricao").
+        const fieldKeySharedWithReal = (objectDef.components ?? []).some(
+          (other) =>
+            other !== c &&
+            (other.nameForm ?? other.name) === fieldKey &&
+            !DISPLAY_TYPES.has(other.type) &&
+            !other.transient,
+        )
+        if (!fieldKeySharedWithReal) keys.push(fieldKey)
+        // Autocomplete com params.key: o valor real salvo no form é params.key (a FK),
+        // não o nameForm (display). Ambos devem ser excluídos do body.
+        if (c.type === 'autocomplete' && c.params?.key) keys.push(c.params.key)
+      }
       // Tipos display-only (não são inputs de dados)
       if (DISPLAY_TYPES.has(c.type)) keys.push(fieldKey)
-      // Campo com computedName: o nameForm é display, o computedName é helper calculado
-      if (c.computedName) keys.push(c.computedName)
+      // Campo com computedName: tanto o campo visual (nameForm ?? name) quanto o
+      // computedName são virtuais — usados só como contexto/referência no form,
+      // nunca enviados ao banco. Ambos são transient.
+      if (c.computedName) {
+        const displayKey = c.nameForm ?? c.name
+        if (displayKey) keys.push(displayKey)
+        keys.push(c.computedName)
+      }
       // Campo sem nameForm em tipo display (usa name como key)
       if (!c.nameForm && DISPLAY_TYPES.has(c.type)) keys.push(c.name)
       // Autocomplete com params.key: nameForm é só display — apenas params.key vai no body.
@@ -475,11 +563,19 @@ export function CrudObject({ objectDef }: Props) {
         keys.push(c.name)           // ex: "Papéis" — nunca vai ao banco
         if (c.nameForm) keys.push(c.nameForm)
       }
+      // Autocomplete: campo virtual {fkField}__label armazena o label do item selecionado
+      // para ser usado em templates {{campo__label}}. É puramente display — nunca vai ao banco.
+      if (c.type === 'autocomplete') {
+        const fkField = c.params?.key ?? (c.nameForm ?? c.name)
+        if (fkField) keys.push(`${fkField}__label`)
+      }
       // Autocomplete fields copy: campos copiados via comp.fields (ex: tipo_lancamento_acao)
       // são dados auxiliares do item selecionado — não são colunas da entidade principal.
       // Só devem ir no body se houver um componente real (input/select/etc.) explícito para eles.
+      // Normaliza formato legado: string[] → {field, as}[] (mesmo tratamento do AutocompleteField)
       if (c.type === 'autocomplete' && c.fields) {
-        for (const f of c.fields) {
+        for (const rawF of c.fields) {
+          const f = typeof rawF === 'string' ? { field: rawF as string, as: rawF as string } : rawF
           const fKey = f.as
           if (!fKey) continue
           const hasExplicitComponent = (objectDef.components ?? []).some(
@@ -496,15 +592,13 @@ export function CrudObject({ objectDef }: Props) {
     }),
   ])
 
-  function onSubmit(values: Record<string, unknown>) {
+  async function onSubmit(values: Record<string, unknown>) {
     const body = Object.fromEntries(
       Object.entries(values)
-        .filter(([key]) => !transientKeys.has(key))
+        .filter(([key]) => !transientKeys.has(key) && !key.endsWith('__label'))
         .map(([key, val]) => [key, normalizeDatetimeForDb(val)])
     )
     // Garante FKs da connection pai→filho no body.
-    // Cobre o caso em que o modal abre antes de connectionParams estar populado
-    // e o defaultValue "{{campo}}" não resolve (fica como string literal ou vazio).
     for (const [key, value] of Object.entries(connectionParams)) {
       if (transientKeys.has(key)) continue
       const current = body[key]
@@ -514,6 +608,31 @@ export function CrudObject({ objectDef }: Props) {
         body[key] = value
       }
     }
+
+    // Campos fileupload: faz upload do File e substitui pelo ID retornado pelo servidor.
+    // O FileUploadField armazena o File object no form; aqui convertemos para o ID persistido.
+    const fileComponents = (objectDef.components ?? []).filter(
+      (c) => (c.type === 'fileupload' || c.type === 'file') && !transientKeys.has(c.nameForm ?? c.name),
+    )
+    for (const fc of fileComponents) {
+      const key = fc.nameForm ?? fc.name
+      const val = body[key]
+      if (val instanceof File) {
+        try {
+          const formData = new FormData()
+          formData.append('file', val)
+          const res = await apiClient.post<{ id?: string | number; name?: string }>('/files/upload', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          })
+          // Servidor retorna { id, name } — armazena o ID no body
+          body[key] = res.data?.id ?? val.name
+        } catch {
+          toast.error(`Erro ao enviar o arquivo "${val.name}". Verifique e tente novamente.`)
+          return
+        }
+      }
+    }
+
     mutation.mutate(body)
   }
 
@@ -543,7 +662,8 @@ export function CrudObject({ objectDef }: Props) {
         formData: values,
         objectId: objectDef.id,
         entity: entityName,
-        action: resolvedMode,      // 'create' | 'edit' | 'detail'
+        action: scriptId,          // nome do script/botão (ex: "nfeEnviar") — igual ao app legado
+        crudMode: resolvedMode,    // modo do CRUD ('create' | 'edit' | 'detail') para contexto
         bulkSelectedData: [],
         entities: {},
         screenParams,
@@ -573,7 +693,7 @@ export function CrudObject({ objectDef }: Props) {
           }
 
           // 3. Recarrega se o script pediu OU se a action tem reloadAfterAction
-          if (result.reload || action.reloadAfterAction) {
+          if (result.reload || result.reloadAfterAction || action.reloadAfterAction) {
             queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
             queryClient.invalidateQueries({ queryKey: ['entity-single', entityName] })
           }
@@ -581,6 +701,7 @@ export function CrudObject({ objectDef }: Props) {
           // 4. Invalida entidades específicas retornadas pelo script
           for (const e of result.affectedEntities ?? []) {
             queryClient.invalidateQueries({ queryKey: ['entity', e] })
+            queryClient.invalidateQueries({ queryKey: ['entity-single', e] })
           }
 
           // 4b. Invalida entidades declaradas na action do JSON (affectedEntities estático)
@@ -622,6 +743,12 @@ export function CrudObject({ objectDef }: Props) {
   // Handler de ação customizada
   const handleCrudAction = useCallback(
     async (action: CrudAction) => {
+      console.log('[CrudObject] handleCrudAction:', JSON.stringify(action))
+      // Confirmação genérica: qualquer action com "confirmation" exibe modal antes de executar.
+      // delete já trata internamente (usa action.confirmation dentro do case).
+      if (action.action !== 'delete' && action.confirmation) {
+        if (!(await confirm(action.confirmation))) return
+      }
       switch (action.action) {
         case 'edit':
         case 'detail': {
@@ -648,7 +775,7 @@ export function CrudObject({ objectDef }: Props) {
         }
         case 'new':
         case 'create':
-          form.reset(buildDefaultValues(objectDef, initialParams))
+          form.reset({ ...buildDefaultValues(objectDef, initialParams, true), ...initialParams })
           setObjectState(objectDef.id, { mode: 'create', formData: null, selectedRow: null })
           break
         case 'cancel':
@@ -661,9 +788,9 @@ export function CrudObject({ objectDef }: Props) {
             const prev: ObjectState['mode'] =
               (defMode === 'edit' || defMode === 'detail') ? defMode : 'detail'
             setObjectState(objectDef.id, { mode: prev })
-            if (record) form.reset({ ...buildDefaultValues(objectDef, initialParams), ...(record as Record<string, unknown>) })
+            if (record) form.reset({ ...buildDefaultValues(objectDef, initialParams, false), ...initialParams, ...form.getValues(), ...(record as Record<string, unknown>) })
           } else {
-            form.reset(buildDefaultValues(objectDef, initialParams))
+            form.reset({ ...buildDefaultValues(objectDef, initialParams, true), ...initialParams })
           }
           break
         case 'save':
@@ -674,7 +801,7 @@ export function CrudObject({ objectDef }: Props) {
           if (entityId && await confirm(action.confirmation ?? 'Deseja realmente excluir este registro?')) {
             entityApi.remove(entityName, entityId).then(() => {
               queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
-              form.reset(buildDefaultValues(objectDef, initialParams))
+              form.reset({ ...buildDefaultValues(objectDef, initialParams, true), ...initialParams })
               setObjectState(objectDef.id, { mode: 'create', formData: null, selectedRow: null })
             })
           }
@@ -772,8 +899,13 @@ export function CrudObject({ objectDef }: Props) {
         default: {
           // Fallback: trata o nome da action como script ID
           // (suporta actions customizadas sem necessidade de trocar para "executeScript")
+          // Ex: { action: "nfeEnviar" } → scriptId = "nfeEnviar"
+          // Ex: { action: "executeScript", script: "nfeEnviar" } → cai no case acima
           const scriptId = action.script ?? action.scriptId ?? action.action
-          console.warn('[CrudObject] Action não mapeada, executando como script:', scriptId)
+          if (!scriptId) {
+            console.error('[CrudObject] crudAction sem script ID — adicione "script":"nomeDoScript" ou use "action":"nomeDoScript" no JSON:', action)
+            break
+          }
           runScript(scriptId, action)
           break
         }
@@ -805,8 +937,8 @@ export function CrudObject({ objectDef }: Props) {
   return (
     <div style={objectDef.style as React.CSSProperties}>
       {confirmDialog}
-      {/* Header */}
-      {objectDef.title && (
+      {/* Header — suprimido em modal (o ModalWrapper já exibe o título no header) */}
+      {objectDef.title && objectDef.variant !== 'modal' && (
         <h3 className="mb-3 text-sm font-semibold text-foreground">
           {interpolateExpr(objectDef.title, { ...initialParams, ...formValues })}
         </h3>
@@ -861,7 +993,8 @@ export function CrudObject({ objectDef }: Props) {
                   {showStandardButtons && (
                     <button
                       type="submit"
-                      disabled={mutation.isPending}
+                      disabled={mutation.isPending || parentIsCreating}
+                      title={parentIsCreating ? 'Salve o registro principal antes de continuar' : undefined}
                       className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
                     >
                       {mutation.isPending
@@ -882,6 +1015,7 @@ export function CrudObject({ objectDef }: Props) {
                       isPending={mutation.isPending}
                       isSubmitAction={action.action === 'save' || action.action === 'submit'}
                       onClick={() => handleCrudAction(action)}
+                      disabled={parentIsCreating}
                     />
                   ))}
                 </>
@@ -943,9 +1077,10 @@ interface CrudActionButtonProps {
   isPending: boolean
   isSubmitAction: boolean
   onClick: () => void
+  disabled?: boolean
 }
 
-function CrudActionButton({ action, isPending, isSubmitAction, onClick }: CrudActionButtonProps) {
+function CrudActionButton({ action, isPending, isSubmitAction, onClick, disabled }: CrudActionButtonProps) {
   const rawVariant = action.variant ?? 'primary'
   // normaliza "btn-primary" → "primary"
   const variant = rawVariant.replace(/^btn-/, '')
@@ -963,8 +1098,8 @@ function CrudActionButton({ action, isPending, isSubmitAction, onClick }: CrudAc
   return (
     <button
       type={isSubmitAction ? 'submit' : 'button'}
-      disabled={isPending && isSubmitAction}
-      title={action.tooltip ?? action.name}
+      disabled={disabled || (isPending && isSubmitAction)}
+      title={disabled ? 'Salve o registro principal antes de continuar' : (action.tooltip ?? action.name)}
       className={`${baseClass} ${variantClass}`}
       onClick={isSubmitAction ? undefined : onClick}
     >
@@ -976,20 +1111,43 @@ function CrudActionButton({ action, isPending, isSubmitAction, onClick }: CrudAc
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function buildDefaultValues(objectDef: ObjectDefinition, params: Record<string, unknown> = {}): Record<string, unknown> {
+/**
+ * Constrói os valores iniciais do formulário.
+ *
+ * @param applyDefaults
+ *   true  → modo CREATE: aplica `defaultValue` de cada componente.
+ *   false → modo EDIT/DETAIL: todos os campos iniciam como `''`.
+ *           O valor real vem da API e é aplicado via form.reset(...record).
+ *           Se não veio da API, o campo fica vazio — nunca usa defaultValue.
+ */
+function buildDefaultValues(
+  objectDef: ObjectDefinition,
+  params: Record<string, unknown> = {},
+  applyDefaults = true,
+): Record<string, unknown> {
   const values: Record<string, unknown> = {}
   for (const comp of objectDef.components ?? []) {
     // ChipSelect: cada opção tem seu próprio nameForm com valor padrão = opt.value
     if (comp.type === 'chipselect') {
       for (const opt of comp.options ?? []) {
         const key = opt.nameForm ?? opt.value
-        if (key) values[key] = opt.value  // valor inicial da opção (ex: "Não")
+        if (key) values[key] = applyDefaults ? opt.value : ''
       }
       continue
     }
     if (!comp.nameForm && !comp.name) continue
     const key = comp.nameForm ?? comp.name
-    values[key] = resolveDynamic(comp.defaultValue, params)
+    values[key] = applyDefaults ? resolveDynamic(comp.defaultValue, params) : ''
+
+    // Em CREATE (applyDefaults=true): autocomplete com params.key precisa ter o campo FK
+    // inicializado para que useController receba o valor e a label seja exibida no mount.
+    // Seguro com o novo cascade (anySourceDirty): buildDefaultValues não marca isDirty,
+    // portanto mudanças durante o init nunca disparam o cascade no filho.
+    //
+    // Em EDIT/DETAIL (applyDefaults=false): omite — o valor vem da API via form.reset(record).
+    if (applyDefaults && comp.type === 'autocomplete' && comp.params?.key && comp.params.key !== key) {
+      values[comp.params.key] = resolveDynamic(comp.defaultValue, params)
+    }
   }
   return values
 }

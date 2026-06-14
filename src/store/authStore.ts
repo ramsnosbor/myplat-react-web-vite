@@ -12,6 +12,8 @@ interface AuthState {
   acl: AclMap | null
   modules: ModuleDefinition[]
   homePath: string
+  /** true após o persist terminar a reidratação do localStorage */
+  _hasHydrated: boolean
 
   setToken: (token: string) => void
   setUser: (user: User) => void
@@ -19,6 +21,7 @@ interface AuthState {
   setAcl: (acl: AclMap, homePath?: string) => void
   setModules: (modules: ModuleDefinition[]) => void
   logout: () => void
+  _setHasHydrated: (v: boolean) => void
 
   isAuthenticated: () => boolean
   /**
@@ -38,12 +41,13 @@ const LEVELS: Record<string, number> = {
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
-      token: null,
+      token: getClientToken(),
       user: null,
       tenant: null,
       acl: null,
       modules: [],
       homePath: '/home',
+      _hasHydrated: false,
 
       setToken(token) {
         // 1. Atualiza cookie + sessionStorage + variável de módulo (axios interceptor)
@@ -69,9 +73,7 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout() {
-        // Limpa cookie + sessionStorage via setClientToken(null)
         setClientToken(null)
-        // Reseta todo o estado reativo
         set({
           token: null,
           user: null,
@@ -80,6 +82,10 @@ export const useAuthStore = create<AuthState>()(
           modules: [],
           homePath: '/home',
         })
+      },
+
+      _setHasHydrated(v) {
+        set({ _hasHydrated: v })
       },
 
       isAuthenticated() {
@@ -107,6 +113,14 @@ export const useAuthStore = create<AuthState>()(
         acl: state.acl,
       }),
 
+      // Merge customizado: token NUNCA vem do localStorage (versões antigas
+      // podiam persistir token; o merge garante que ele sempre vem do cookie).
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Record<string, unknown>
+        const { token: _ignored, ...rest } = p
+        return { ...current, ...(rest as Partial<AuthState>) }
+      },
+
       // Reidratação (F5 ou nova aba):
       //   client.ts já leu o cookie no módulo load → getClientToken() retorna o valor
       //   Basta copiar para o estado Zustand e garantir que o axios está atualizado
@@ -117,9 +131,9 @@ export const useAuthStore = create<AuthState>()(
         const token = getClientToken()
         if (token) {
           state.token = token
-          // setClientToken não é necessário (já está no cliente), mas garante sync
           setClientToken(token)
         }
+        state._hasHydrated = true
       },
     },
   ),

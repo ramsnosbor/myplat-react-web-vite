@@ -19,7 +19,10 @@ export interface DFeRecord {
   tipoManifestacao?: string
   justificativaManifestacao?: string
   protocolo?: string
-  valorTotal?: number
+  /** Número da nota fiscal retornado pelo endpoint /nfe-dfe */
+  numeroNf?: string | number
+  /** Valor total da nota — tag XML vlTotalNota retornada pelo endpoint /nfe-dfe */
+  vlTotalNota?: number
   [key: string]: unknown
 }
 
@@ -32,6 +35,8 @@ export interface NfeRecord {
   valor_total_nfe?: number
   ds_tipo_nfe?: string
   ds_nfe_status?: string
+  numero?: string | number
+  nr_protocolo?: string
   [key: string]: unknown
 }
 

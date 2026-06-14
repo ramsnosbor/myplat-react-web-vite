@@ -189,6 +189,11 @@ export function TableObject({ objectDef }: Props) {
   const handleRowAction = useCallback(
     async (action: ComponentAction, row: EntityRecord) => {
       try {
+      // Confirmação genérica: qualquer action com "confirmation" exibe modal antes de executar.
+      // delete já trata internamente (usa action.confirmation dentro do case).
+      if (action.action !== 'delete' && action.confirmation) {
+        if (!(await confirm(action.confirmation))) return
+      }
       switch (action.action) {
         case 'edit':
         case 'showObject':
@@ -410,7 +415,9 @@ export function TableObject({ objectDef }: Props) {
 
   // Handler de generalActions
   const handleGeneralAction = useCallback(
-    (action: ComponentAction) => {
+    async (action: ComponentAction) => {
+      // Confirmação genérica: qualquer generalAction com "confirmation" exibe modal antes de executar.
+      if (action.confirmation && !(await confirm(action.confirmation))) return
       switch (action.action) {
         case 'showObject': {
           if (!action.object) break
@@ -436,7 +443,19 @@ export function TableObject({ objectDef }: Props) {
         }
         case 'navigate': {
           const screen = action.object ?? action.url ?? ''
-          if (screen) navigate(`/home/${screen}`)
+          if (!screen) break
+          // Resolve searchParams com interpolação {{campo}} usando initialParams + screenParams
+          const ctx = { ...screenParams, ...initialParams } as Record<string, unknown>
+          const navParams: Record<string, unknown> = {}
+          for (const [key, val] of Object.entries(action.searchParams ?? {})) {
+            navParams[key] = typeof val === 'string' && val.includes('{{')
+              ? interpolate(val, ctx)
+              : val
+          }
+          navigate(
+            `/home/${screen}`,
+            Object.keys(navParams).length > 0 ? { state: { searchParams: navParams } } : undefined,
+          )
           break
         }
         case 'executeScript': {
@@ -521,6 +540,7 @@ export function TableObject({ objectDef }: Props) {
               key={i}
               action={action}
               onAction={handleGeneralAction}
+              disabled={!enabled}
             />
           ))}
           <TableSettingsButton
@@ -652,8 +672,10 @@ export function TableObject({ objectDef }: Props) {
                             style={Object.keys(colStyle).length ? colStyle : undefined}
                             className={`px-3 py-2 ${isNumeric ? 'text-right tabular-nums' : ''}`}
                           >
-                            {col.type === 'template' || col.template
-                              ? renderTemplate(col.template ?? '', row)
+                            {col.type === 'template' || col.template || col.templates
+                              ? (col.templates?.length
+                                  ? renderTemplates(col.templates, row)
+                                  : renderTemplate(col.template ?? '', row))
                               : formatCell(row[col.name], col)}
                           </td>
                           )
@@ -846,9 +868,11 @@ function TableMobileCard({
 }
 
 function renderMobileCell(col: ComponentDefinition, row: EntityRecord) {
-  return col.type === 'template' || col.template
-    ? renderTemplate(col.template ?? '', row)
-    : formatCell(row[col.name], col)
+  if (col.type === 'template' || col.template || col.templates) {
+    if (col.templates?.length) return renderTemplates(col.templates, row)
+    return renderTemplate(col.template ?? '', row)
+  }
+  return formatCell(row[col.name], col)
 }
 
 interface TableSettingsButtonProps {
@@ -992,19 +1016,25 @@ function TableSettingsButton({
 interface GeneralActionButtonProps {
   action: ComponentAction
   onAction: (action: ComponentAction) => void
+  disabled?: boolean
 }
 
-function GeneralActionButton({ action, onAction }: GeneralActionButtonProps) {
+function GeneralActionButton({ action, onAction, disabled }: GeneralActionButtonProps) {
   const label = action.title ?? action.name ?? ''
   const variantClass = GA_VARIANT[action.variant ?? 'primary'] ?? GA_VARIANT['primary']
+  const title = disabled
+    ? 'Selecione ou salve o registro principal para habilitar esta ação'
+    : (action.tooltip ?? label)
 
   return (
     <button
       type="button"
-      title={action.tooltip ?? label}
-      onClick={() => onAction(action)}
+      title={title}
+      onClick={() => !disabled && onAction(action)}
+      disabled={disabled}
       className={[
         'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+        'disabled:cursor-not-allowed disabled:opacity-40',
         variantClass,
       ].join(' ')}
       style={action.style as React.CSSProperties}
@@ -1213,4 +1243,54 @@ function renderTemplate(template: string, row: EntityRecord): React.ReactNode {
   })
   // Permite HTML simples como <b>, <br>, <span>
   return <span dangerouslySetInnerHTML={{ __html: rendered }} />
+}
+
+/**
+ * Renderiza um array de templates com suporte a visibilidade condicional.
+ *
+ * Cada item pode ter:
+ *   - template: string com interpolação {{campo}}
+ *   - visible?: "campo=valor"  → só exibe se row[campo] === valor
+ *   - placeHolder?: string exibido abaixo em tom secundário quando visível
+ *
+ * Itens visíveis são renderizados empilhados (flex-col).
+ */
+function renderTemplates(
+  templates: Array<{ template: string; visible?: string; placeHolder?: string }>,
+  row: EntityRecord,
+): React.ReactNode {
+  const interpolate = (str: string) =>
+    str.replace(/\{\{(\w+)\}\}/g, (_, key: string) => {
+      const val = row[key]
+      return val !== null && val !== undefined ? String(val) : ''
+    })
+
+  const isVisible = (visible?: string): boolean => {
+    if (!visible) return true
+    const eqIdx = visible.indexOf('=')
+    if (eqIdx === -1) return true
+    const field = visible.slice(0, eqIdx).trim()
+    const expected = visible.slice(eqIdx + 1).trim()
+    return String(row[field] ?? '') === expected
+  }
+
+  const visible = templates.filter((t) => isVisible(t.visible))
+  if (visible.length === 0) return null
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      {visible.map((t, i) => {
+        const main = interpolate(t.template)
+        const sub = t.placeHolder ? interpolate(t.placeHolder) : null
+        return (
+          <span key={i}>
+            <span dangerouslySetInnerHTML={{ __html: main }} />
+            {sub && (
+              <span className="block text-xs text-gray-400" dangerouslySetInnerHTML={{ __html: sub }} />
+            )}
+          </span>
+        )
+      })}
+    </div>
+  )
 }

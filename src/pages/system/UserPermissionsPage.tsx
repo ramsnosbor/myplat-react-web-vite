@@ -60,7 +60,7 @@ export default function UserPermissionsPage() {
   if (!userId) {
     return (
       <AppShell title="Permissoes do Usuario" subtitle="Selecione um usuario para editar permissoes.">
-        <div className="p-6">
+        <div className="min-h-full w-full bg-background p-3 sm:p-4">
           <div className="rounded-lg border border-blue-100 bg-white p-8 text-center shadow-sm shadow-blue-950/5">
             <p className="text-sm text-slate-600">Nenhum usuario selecionado.</p>
             <button className="mt-4 rounded-md bg-blue-700 px-4 py-2 text-sm font-semibold text-white" onClick={() => navigate('/usuarioList')}>
@@ -74,8 +74,8 @@ export default function UserPermissionsPage() {
 
   return (
     <AppShell title="Permissoes do Usuario" subtitle="Controle de funcionalidades por usuario.">
-      <div className="min-h-full bg-background p-4 sm:p-6">
-        <div className="mx-auto max-w-6xl rounded-lg border border-blue-100 bg-white p-4 shadow-sm shadow-blue-950/5">
+      <div className="min-h-full w-full bg-background p-3 sm:p-4">
+        <div className="w-full rounded-lg border border-blue-100 bg-white p-4 shadow-sm shadow-blue-950/5">
           <div className="grid gap-3 md:grid-cols-12">
             <Field className="md:col-span-3" label="ID">
               <input className={inputClass} value={userId} disabled />
@@ -100,7 +100,7 @@ export default function UserPermissionsPage() {
 
           <div className="mt-6 border-t border-slate-100 pt-4">
             <h2 className="text-sm font-semibold text-slate-900">Funcionalidades</h2>
-            <div className="mt-3 max-h-[48vh] overflow-auto rounded-md border border-slate-200">
+            <div className="mt-3 max-h-[calc(100vh-360px)] overflow-auto rounded-md border border-slate-200">
               {permissionsQuery.isLoading ? (
                 <div className="py-12 text-center text-sm text-slate-500">Carregando...</div>
               ) : sortedPermissions.map((item, index) => (

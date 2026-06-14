@@ -37,6 +37,7 @@ export default function DFeConsultaPage({ initialTopTab = 'hub' }: DFeConsultaPa
   })
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(25)
+  const [emitidosSubTab, setEmitidosSubTab] = useState<'saida' | 'servico'>('saida')
   const [orderBy, setOrderBy] = useState('id')
   const [orderDirection, setOrderDirection] = useState<'asc' | 'desc'>('desc')
   const [loading, setLoading] = useState(false)
@@ -86,14 +87,16 @@ export default function DFeConsultaPage({ initialTopTab = 'hub' }: DFeConsultaPa
     if (topTab === 'emitentes') loadEmitentes()
     else loadHub(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topTab, hubTab, page, pageSize, orderBy, orderDirection, periodo.ano, periodo.mes])
+  }, [topTab, hubTab, emitidosSubTab, page, pageSize, orderBy, orderDirection, periodo.ano, periodo.mes,
+      filters.dataEmissaoInicio, filters.dataEmissaoFim, filters.nomeEmitente, filters.chaveNfe])
 
   useEffect(() => {
-    if (topTab !== 'emitentes') return
+    // O painel de resumo é sempre visível — carrega independente da aba ativa.
+    // NFe/Recebidas/Canceladas reagem aos filtros do Hub; Pendentes e Fechamentos ignoram filtros.
     loadEmitentesSummary()
     loadCertGauge()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topTab, periodo.ano, periodo.mes, selectedEmpresaId])
+  }, [periodo.ano, periodo.mes, selectedEmpresaId, filters.dataEmissaoInicio, filters.dataEmissaoFim, filters.nomeEmitente, filters.chaveNfe])
 
   async function loadHub(reset = false) {
     setLoading(true)
@@ -110,7 +113,6 @@ export default function DFeConsultaPage({ initialTopTab = 'hub' }: DFeConsultaPa
         setTotalPages(response.totalPages ?? 1)
         setTotalElements(response.totalElements ?? response.table?.length ?? 0)
       } else {
-        const entity = hubTab === 'emitidos' ? 'v_nfe' : 'v_nfe_entrada'
         const params: Record<string, unknown> = {
           pageNumber: nextPage,
           pageSize,
@@ -119,9 +121,10 @@ export default function DFeConsultaPage({ initialTopTab = 'hub' }: DFeConsultaPa
         if (filters.dataEmissaoInicio && filters.dataEmissaoFim) params.data_emissao = `${filters.dataEmissaoInicio},${filters.dataEmissaoFim}`
         if (filters.chaveNfe) params.chave_acesso = filters.chaveNfe
         if (filters.nomeEmitente) params.nome_pessoa_cli_for = filters.nomeEmitente
-        if (hubTab === 'emitidos') params.ds_tipo_nfe = 'Saida'
+        if (hubTab === 'emitidos') params.ds_tipo_nfe = emitidosSubTab === 'servico' ? 'Serviço' : 'Saida'
+        if (hubTab === 'recebidos') params.ds_tipo_nfe = 'Entrada'
 
-        const response = await dfeApi.getDefault<NfeRecord>(entity, params)
+        const response = await dfeApi.getDefault<NfeRecord>('v_nfe', params)
         setNfeList(rows<NfeRecord>(response))
         setTotalPages(response.totalPages ?? 1)
         setTotalElements(response.totalElements ?? rows<NfeRecord>(response).length)
@@ -182,14 +185,25 @@ export default function DFeConsultaPage({ initialTopTab = 'hub' }: DFeConsultaPa
   async function loadEmitentesSummary() {
     setSummaryLoading(true)
     try {
+      // Fechamentos: usa período próprio da aba Emitentes
       const inicio = dayjs(new Date(periodo.ano, periodo.mes - 1, 1)).format('YYYY-MM-DD')
       const fim = dayjs(new Date(periodo.ano, periodo.mes, 0)).format('YYYY-MM-DD')
-      const nfeParams: Record<string, unknown> = { pageNumber: 1, pageSize: 1, orderBy: 'data_emissao,desc', data_emissao: `${inicio},${fim}` }
-      const pendentesParams: Record<string, unknown> = { pageNumber: 1, pageSize: 1, orderBy: 'id,desc', dataEmissaoInicio: `${inicio}T00:00:00`, dataEmissaoFim: `${fim}T23:59:59` }
-      if (selectedEmpresaId) {
-        nfeParams.id_empresa = selectedEmpresaId
-        pendentesParams.idEmpresa = selectedEmpresaId
+
+      // NFe/NFSe/Recebidas/Canceladas: usam os filtros do Hub (data, emitente, etc.)
+      const nfeParams: Record<string, unknown> = {
+        pageNumber: 1,
+        pageSize: 1,
+        orderBy: 'data_emissao,desc',
+        ...(filters.dataEmissaoInicio && filters.dataEmissaoFim
+          ? { data_emissao: `${filters.dataEmissaoInicio},${filters.dataEmissaoFim}` }
+          : {}),
+        ...(filters.nomeEmitente ? { nome_pessoa_cli_for: filters.nomeEmitente } : {}),
+        ...(filters.chaveNfe     ? { chave_acesso: filters.chaveNfe }             : {}),
       }
+      if (selectedEmpresaId) nfeParams.id_empresa = selectedEmpresaId
+
+      // Pendentes: sem filtro de data — exibe tudo que está aguardando manifestação
+      const pendentesParams: Record<string, unknown> = { pageNumber: 1, pageSize: 1, orderBy: 'id,desc' }
 
       const [empresasBase, periodos, pendentes, emitidasNfe, emitidasNfse, recebidas, canceladas] = await Promise.all([
         dfeApi.getEmpresasEmitentes(),
@@ -198,7 +212,7 @@ export default function DFeConsultaPage({ initialTopTab = 'hub' }: DFeConsultaPa
         dfeApi.getDefault<NfeRecord>('v_nfe', { ...nfeParams, ds_tipo_nfe: 'Saida' }),
         dfeApi.getDefault<NfeRecord>('v_nfe', { ...nfeParams, ds_tipo_nfe: 'Serviço' }),
         dfeApi.getDefault<NfeRecord>('v_nfe', { ...nfeParams, ds_tipo_nfe: 'Entrada' }),
-        dfeApi.getDefault<NfeRecord>('v_nfe', { ...nfeParams, ds_nfe_status: 'Cancelada' }),
+        dfeApi.getDefault<NfeRecord>('v_nfe', { ...nfeParams, ds_nfe_status: '%ancelad%' }),
       ])
 
       const empresasResumo = selectedEmpresaId ? empresasBase.filter((empresa) => sameId(empresa.id_pessoa, selectedEmpresaId)) : empresasBase
@@ -510,22 +524,27 @@ export default function DFeConsultaPage({ initialTopTab = 'hub' }: DFeConsultaPa
       ) : (
       <div className="min-h-full bg-background p-2 sm:p-3">
         <div className="w-full space-y-3">
-          <section className="rounded-lg border border-blue-100 bg-white p-3 shadow-sm shadow-blue-950/5">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-md bg-blue-700 text-white"><i className="bi bi-receipt" aria-hidden /></div>
-                <div><h1 className="text-lg font-semibold text-slate-900">HUB DFe - Documentos Fiscais Eletronicos</h1><p className="text-sm text-slate-500">Consulta, manifestacao e download de documentos fiscais.</p></div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => openEmissao('crudMovimento?tipo_nfe=Saida&action=create', 'Emitir NF-e')} className={secondaryButtonClass}>+ Emitir NF-e</button>
-                <button type="button" onClick={() => openEmissao(`crudMovimento?tipo_nfe=${encodeURIComponent('Serviço')}&action=create`, 'Emitir NFSe')} className={primaryButtonClass}>+ Emitir NFSe</button>
-              </div>
-            </div>
-          </section>
+          {/* Painéis de resumo — visíveis em qualquer aba */}
+          <EmitentesSummaryPanel
+            summary={summaryData}
+            loading={summaryLoading}
+            certData={certGaugeData}
+            certLoading={certGaugeLoading}
+            periodoLabel={formatPeriodoExtenso(periodo.mes, periodo.ano)}
+            filtroLabel={filters.dataEmissaoInicio && filters.dataEmissaoFim
+              ? `${dayjs(filters.dataEmissaoInicio).format('DD/MM/YY')} – ${dayjs(filters.dataEmissaoFim).format('DD/MM/YY')}`
+              : undefined}
+          />
 
-          <div className="flex flex-wrap gap-2">
-            <TabButton active={topTab === 'emitentes'} onClick={() => setTopTab('emitentes')} icon="bi bi-building" label="Emitentes" />
-            <TabButton active={topTab === 'hub'} onClick={() => setTopTab('hub')} icon="bi bi-grid" label="Hub" />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-2">
+              <TabButton active={topTab === 'emitentes'} onClick={() => setTopTab('emitentes')} icon="bi bi-building" label="Emitentes" />
+              <TabButton active={topTab === 'hub'} onClick={() => setTopTab('hub')} icon="bi bi-grid" label="Hub" />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => openEmissao('crudMovimento?tipo_nfe=Saida&action=create', 'Emitir NF-e')} className={secondaryButtonClass}>+ Emitir NF-e</button>
+              <button type="button" onClick={() => openEmissao(`crudMovimento?tipo_nfe=${encodeURIComponent('Serviço')}&action=create`, 'Emitir NFSe')} className={primaryButtonClass}>+ Emitir NFSe</button>
+            </div>
           </div>
 
           {topTab === 'hub' ? (
@@ -543,10 +562,17 @@ export default function DFeConsultaPage({ initialTopTab = 'hub' }: DFeConsultaPa
                 </div>
               </section>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <TabButton active={hubTab === 'pendentes'} onClick={() => { setHubTab('pendentes'); setPage(1) }} icon="bi bi-hourglass-split" label="Pendentes" />
                 <TabButton active={hubTab === 'emitidos'} onClick={() => { setHubTab('emitidos'); setPage(1) }} icon="bi bi-send-check" label="Emitidos" />
                 <TabButton active={hubTab === 'recebidos'} onClick={() => { setHubTab('recebidos'); setPage(1) }} icon="bi bi-inbox" label="Recebidos" />
+                {hubTab === 'emitidos' && (
+                  <>
+                    <span className="text-slate-300">|</span>
+                    <TabButton active={emitidosSubTab === 'saida'} onClick={() => { setEmitidosSubTab('saida'); setPage(1) }} icon="bi bi-file-earmark-text" label="NF-e" />
+                    <TabButton active={emitidosSubTab === 'servico'} onClick={() => { setEmitidosSubTab('servico'); setPage(1) }} icon="bi bi-file-earmark-medical" label="NFSe" />
+                  </>
+                )}
               </div>
 
               {hubTab === 'pendentes' && selectedIds.length > 0 && (
@@ -578,8 +604,6 @@ export default function DFeConsultaPage({ initialTopTab = 'hub' }: DFeConsultaPa
             </>
           ) : (
             <>
-              <EmitentesSummaryPanel summary={summaryData} loading={summaryLoading} certData={certGaugeData} certLoading={certGaugeLoading} />
-
               <section className="rounded-lg border border-blue-100 bg-white shadow-sm shadow-blue-950/5">
                 <div className="flex flex-col gap-3 border-b border-slate-100 p-3 xl:flex-row xl:items-end xl:justify-between">
                   <div className="grid flex-1 gap-3 md:grid-cols-12">
@@ -740,6 +764,8 @@ function EmitentesSummaryPanel({
   loading,
   certData,
   certLoading,
+  periodoLabel,
+  filtroLabel,
 }: {
   summary: {
     fechamentos: { fechadas: number; total: number }
@@ -752,6 +778,8 @@ function EmitentesSummaryPanel({
   loading: boolean
   certData: Array<{ status_certificado?: string; total?: number | string; cor?: string }>
   certLoading: boolean
+  periodoLabel?: string
+  filtroLabel?: string
 }) {
   const certTotal = certData.reduce((sum, item) => sum + (Number(item.total) || 0), 0)
   return (
@@ -798,12 +826,12 @@ function EmitentesSummaryPanel({
           </div>
         )}
       </div>
-      <SummaryCard title="Fechamentos" value={loading ? '...' : `${summary.fechamentos.fechadas}/${summary.fechamentos.total}`} hint="Fechadas / Total" tone="blue" />
-      <SummaryCard title="Emitidas NFSe" value={loading ? '...' : summary.emitidas_nfse} hint="documentos" tone="blue" />
-      <SummaryCard title="Emitidas NF-e" value={loading ? '...' : summary.emitidas_nfe} hint="documentos" tone="blue" />
-      <SummaryCard title="Recebidas" value={loading ? '...' : summary.recebidas} hint="documentos" tone="green" />
-      <SummaryCard title="Canceladas" value={loading ? '...' : summary.canceladas} hint="documentos" tone="red" />
-      <SummaryCard title="Pendentes" value={loading ? '...' : summary.pendentes} hint="documentos" tone="orange" />
+      <SummaryCard title="Fechamentos"  value={loading ? '...' : `${summary.fechamentos.fechadas}/${summary.fechamentos.total}`} hint={periodoLabel ?? 'Fechadas / Total'} tone="blue" />
+      <SummaryCard title="Emitidas NFSe" value={loading ? '...' : summary.emitidas_nfse} hint={filtroLabel ?? 'documentos'} tone="blue" />
+      <SummaryCard title="Emitidas NF-e" value={loading ? '...' : summary.emitidas_nfe} hint={filtroLabel ?? 'documentos'} tone="blue" />
+      <SummaryCard title="Recebidas"     value={loading ? '...' : summary.recebidas}     hint={filtroLabel ?? 'documentos'} tone="green" />
+      <SummaryCard title="Canceladas"    value={loading ? '...' : summary.canceladas}    hint={filtroLabel ?? 'documentos'} tone="red" />
+      <SummaryCard title="Pendentes"     value={loading ? '...' : summary.pendentes}     hint="todos os pendentes"          tone="orange" />
     </section>
   )
 }
@@ -950,30 +978,38 @@ function DFeTable({
   return (
     <section className="rounded-lg border border-blue-100 bg-white shadow-sm shadow-blue-950/5">
       <div className="max-h-[calc(100vh-390px)] overflow-auto rounded-lg">
-        <table className="w-full min-w-[1180px] table-fixed border-separate border-spacing-0 text-sm">
-          <colgroup>{isPending && <col className="w-12" />}<col className="w-32" /><col className="w-64" /><col /><col className="w-32" /><col className="w-48" /><col className="w-44" /></colgroup>
+        <table className="w-full min-w-[1380px] table-fixed border-separate border-spacing-0 text-sm">
+          <colgroup>{isPending && <col className="w-12" />}<col className="w-28" /><col className="w-24" /><col /><col className="w-96" /><col className="w-28" /><col className="w-40" /><col className="w-40" /></colgroup>
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr>
               {isPending && <th className={thClass}><input type="checkbox" checked={selectedIds.length === rowsData.length && rowsData.length > 0} onChange={onToggleAll} /></th>}
               <SortTh field="dataEmissao" active={orderBy} direction={orderDirection} onSort={onSort}>Emissao</SortTh>
+              <th className={thClass}>Numero</th>
               <SortTh field="nomeEmitente" active={orderBy} direction={orderDirection} onSort={onSort}>Emitente</SortTh>
-              <th className={thClass}>Chave</th>
-              <th className={thClass}>Valor</th>
+              <th className={thClass}>Chave / Protocolo</th>
+              <th className={`${thClass} text-right`}>Valor</th>
               <SortTh field="status" active={orderBy} direction={orderDirection} onSort={onSort}>Status</SortTh>
               <th className={thClass}>Acoes</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <LoadingRow colSpan={isPending ? 7 : 6} /> : rowsData.length > 0 ? rowsData.map((item) => {
+            {loading ? <LoadingRow colSpan={isPending ? 8 : 7} /> : rowsData.length > 0 ? rowsData.map((item) => {
               const id = getDfeId(item)
+              const chave = getDfeKey(item)
+              const protocolo = getDfeProtocolo(item)
               return (
                 <tr key={id} className="hover:bg-slate-50">
                   {isPending && <td className={tdClass}><input type="checkbox" checked={selectedIds.includes(id)} onChange={() => onToggle(id)} /></td>}
                   <td className={tdClass}>{formatDate(getDfeDate(item))}</td>
+                  <td className={`${tdClass} tabular-nums`}>{getDfeNumero(item)}</td>
                   <td className={`${tdClass} truncate`}>{getDfePerson(item)}</td>
-                  <td className={`${tdClass} truncate font-mono text-xs`}>{getDfeKey(item) || '-'}</td>
-                  <td className={tdClass}>{formatCurrency(getDfeValue(item))}</td>
-                  <td className={tdClass}><StatusBadge status={getDfeStatus(item)} /></td>
+                  <td className={`${tdClass} text-xs`}>
+                    {chave ? <span className="block truncate font-mono">{chave}</span> : null}
+                    {protocolo !== '-' && protocolo !== chave ? <span className="block truncate text-slate-500">{protocolo}</span> : null}
+                    {!chave && protocolo === '-' ? <span>-</span> : null}
+                  </td>
+                  <td className={`${tdClass} text-right tabular-nums`}>{formatCurrency(getDfeValue(item))}</td>
+                  <td className={tdClass}>{(() => { const s = getDfeStatus(item); return <StatusBadge status={s.label} cls={s.cls} /> })()}</td>
                   <td className={tdClass}>
                     <div className="flex items-center gap-1">
                       {isPending && <IconButton title="Manifestar" icon="bi bi-check-circle" tone="success" onClick={() => onManifest(item as DFeRecord)} />}
@@ -984,7 +1020,7 @@ function DFeTable({
                   </td>
                 </tr>
               )
-            }) : <EmptyRow colSpan={isPending ? 7 : 6} title="Nenhum documento encontrado" />}
+            }) : <EmptyRow colSpan={isPending ? 8 : 7} title="Nenhum documento encontrado" />}
           </tbody>
         </table>
       </div>
@@ -1008,8 +1044,36 @@ function getDfeId(item: DFeRecord | NfeRecord): string | number {
 function getDfeDate(item: DFeRecord | NfeRecord) { return ('dataEmissao' in item ? item.dataEmissao : item.data_emissao) as string | undefined }
 function getDfePerson(item: DFeRecord | NfeRecord) { return (('nomeEmitente' in item ? item.nomeEmitente : item.nome_pessoa_cli_for) as string | undefined) ?? '-' }
 function getDfeKey(item: DFeRecord | NfeRecord) { return (('chaveNfe' in item ? item.chaveNfe : item.chave_acesso) as string | undefined) ?? '' }
-function getDfeValue(item: DFeRecord | NfeRecord) { return Number(('valorTotal' in item ? item.valorTotal : item.valor_total_nfe) ?? 0) }
-function getDfeStatus(item: DFeRecord | NfeRecord) { return String(('status' in item ? item.status : item.ds_nfe_status) ?? '-') }
+function getDfeNumero(item: DFeRecord | NfeRecord) {
+  const val = ('numeroNf' in item ? item.numeroNf : item.numero) as string | number | undefined
+  return val != null && val !== '' ? String(val) : '-'
+}
+function getDfeProtocolo(item: DFeRecord | NfeRecord) {
+  const val = ('protocolo' in item ? item.protocolo : item.nr_protocolo) as string | undefined
+  return val ?? '-'
+}
+function getDfeValue(item: DFeRecord | NfeRecord) {
+  // DFeRecord: a API /nfe-dfe retorna o valor na tag XML vlTotalNota
+  // NfeRecord: campo valor_total_nfe da view v_nfe
+  return Number(('vlTotalNota' in item ? item.vlTotalNota : item.valor_total_nfe) ?? 0)
+}
+
+const DFE_STATUS_MAP: Record<number, { label: string; cls: string }> = {
+  0: { label: 'Pendente',      cls: 'border-amber-200  bg-amber-50  text-amber-700'   },
+  1: { label: 'Processado',    cls: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+  2: { label: 'Resumo',        cls: 'border-amber-200  bg-amber-50  text-amber-700'   },
+  3: { label: 'Erro',          cls: 'border-red-200    bg-red-50    text-red-700'      },
+  4: { label: 'NFe Importada', cls: 'border-blue-200   bg-blue-50   text-blue-700'    },
+  5: { label: 'Tratado Manual',cls: 'border-slate-200  bg-slate-50  text-slate-500'   },
+}
+
+function getDfeStatus(item: DFeRecord | NfeRecord): { label: string; cls?: string } {
+  if ('status' in item) {
+    const num = Number(item.status)
+    return DFE_STATUS_MAP[num] ?? { label: String(item.status ?? '-') }
+  }
+  return { label: String(item.ds_nfe_status ?? '-') }
+}
 function formatDate(value?: string) { return value ? dayjs(value).format('DD/MM/YYYY') : '-' }
 function formatCurrency(value: number) { return value ? value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-' }
 function formatPeriodoExtenso(mes: number, ano: number) { return `${mesesNome[Math.max(0, Math.min(11, mes - 1))]}/${ano}` }
@@ -1068,9 +1132,19 @@ function SortTh({ field, active, direction, onSort, children }: { field: string;
   return <th className={thClass}><button type="button" onClick={() => onSort(field)} className="inline-flex items-center gap-1">{children}{active === field && <i className={`bi ${direction === 'asc' ? 'bi-arrow-up' : 'bi-arrow-down'}`} aria-hidden />}</button></th>
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, cls: clsOverride }: { status: string; cls?: string }) {
   const normalized = status.toLowerCase()
-  const cls = normalized.includes('cancel') ? 'border-red-200 bg-red-50 text-red-700' : normalized.includes('pend') || normalized === '1' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  const cls = clsOverride ?? (
+    normalized.includes('cancel') || normalized.includes('erro')
+      ? 'border-red-200 bg-red-50 text-red-700'
+      : normalized.includes('pend') || normalized.includes('resum')
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
+        : normalized.includes('import') || normalized.includes('process')
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          : normalized.includes('manual') || normalized.includes('trat')
+            ? 'border-slate-200 bg-slate-50 text-slate-500'
+            : 'border-blue-200 bg-blue-50 text-blue-700'
+  )
   return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${cls}`}>{status}</span>
 }
 

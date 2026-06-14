@@ -496,9 +496,12 @@ export function BulkEditTableObject({ objectDef }: Props) {
           {/* generalActions */}
           {generalActions.flatMap(ga => ga.actions ?? []).map((action, i) => (
             <button key={i} type="button"
-              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              disabled={!enabled}
+              title={!enabled ? 'Selecione ou salve o registro principal para habilitar esta ação' : (action.tooltip ?? action.title ?? action.name ?? '')}
+              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               style={action.style as React.CSSProperties}
               onClick={() => {
+                if (!enabled) return
                 if ((action.action === 'showObject' || action.action === 'create') && action.object) {
                   const mode = (action.objectAction ?? 'create') as 'create' | 'edit' | 'detail'
                   setObjectState(action.object, { mode, selectedRow: null, formData: null })
@@ -510,15 +513,17 @@ export function BulkEditTableObject({ objectDef }: Props) {
           ))}
           {/* Add row */}
           {addRowCfg && (
-            <button type="button" onClick={handleAddRow}
-              className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors">
+            <button type="button" onClick={handleAddRow} disabled={!enabled}
+              title={!enabled ? 'Selecione ou salve o registro principal para habilitar esta ação' : undefined}
+              className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
               {addRowCfg.icon && <i className={addRowCfg.icon} />}
               {addRowCfg.label ?? 'Adicionar'}
             </button>
           )}
           {/* Submit */}
           {(objectDef.submitActions?.length ?? 0) > 0 && (
-            <button type="button" onClick={handleSubmit} disabled={isSaving || !hasChanges}
+            <button type="button" onClick={handleSubmit} disabled={isSaving || !hasChanges || !enabled}
+              title={!enabled ? 'Selecione ou salve o registro principal para habilitar esta ação' : undefined}
               className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
               {isSaving ? <><div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" /> Processando...</> : objectDef.submitLabel ?? 'Salvar'}
             </button>

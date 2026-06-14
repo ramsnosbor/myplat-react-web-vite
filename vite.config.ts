@@ -47,8 +47,19 @@ export default defineConfig(({ mode }) => {
 
     // Garante que dependências CJS de recharts (es-toolkit/compat) sejam
     // pré-bundladas pelo esbuild, evitando o bug "var t=t()" do Rollup.
+    define: {
+      global: 'globalThis',
+    },
+
     optimizeDeps: {
-      include: ['recharts', 'es-toolkit'],
+      include: [
+        'recharts',
+        'es-toolkit',
+        'react-pivottable',
+        'react-pivottable/PivotTableUI',
+        'react-pivottable/TableRenderers',
+        'react-pivottable/Utilities',
+      ],
     },
 
     server: {

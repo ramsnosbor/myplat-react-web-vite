@@ -90,16 +90,27 @@ export const entityApi = {
 
   /**
    * Schema da entidade: GET /entities/{entity}
-   * Servidor retorna { entities: [{ entity, config: { primary, ... } }], data: [...] }
-   * Retorna o primeiro item de entities (o schema da entidade solicitada).
+   *
+   * O servidor pode retornar dois formatos:
+   *   Formato A (legado): { entities: [{ entity, config }], data: [...] }
+   *   Formato B (atual):  { entity, config }  — objeto direto, sem wrapper
+   *
+   * Normaliza ambos e retorna sempre { entity, config }.
    */
   getSchema(entity: string): Promise<EntitySchemaResponse> {
     return apiClient
-      .get<{ entities: EntitySchemaResponse[]; data?: unknown[] }>(`/entities/${entity}`)
+      .get<{ entities?: EntitySchemaResponse[]; entity?: string; config?: unknown; data?: unknown[] }>(`/entities/${entity}`)
       .then((r) => {
-        const schema = r.data.entities?.[0]
-        if (!schema) throw new Error(`Schema nao encontrado para a entidade "${entity}".`)
-        return schema
+        // Formato A: { entities: [{ entity, config }] }
+        const fromEntities = r.data.entities?.[0]
+        if (fromEntities) return fromEntities
+
+        // Formato B: { entity, config } — schema direto na raiz
+        if (r.data.entity && r.data.config) {
+          return r.data as unknown as EntitySchemaResponse
+        }
+
+        throw new Error(`Schema não encontrado para a entidade "${entity}".`)
       })
   },
 

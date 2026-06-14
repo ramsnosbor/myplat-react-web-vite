@@ -38,8 +38,8 @@ export default function MessagesDefinitionPage() {
 
   return (
     <AppShell title="Mensagens Automatizadas" subtitle="Definicoes de disparo e variaveis de mensagens.">
-      <div className="min-h-full bg-background p-4 sm:p-6">
-        <div className="mx-auto max-w-7xl space-y-4">
+      <div className="min-h-full w-full bg-background p-3 sm:p-4">
+        <div className="w-full space-y-4">
           <section className="rounded-lg border border-blue-100 bg-white p-4 shadow-sm shadow-blue-950/5">
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
@@ -66,7 +66,7 @@ export default function MessagesDefinitionPage() {
           </section>
 
           <section className="rounded-lg border border-blue-100 bg-white shadow-sm shadow-blue-950/5">
-            <div className="max-h-[calc(100vh-342px)] overflow-auto rounded-lg">
+            <div className="max-h-[calc(100vh-310px)] overflow-auto rounded-lg">
               <table className="w-full min-w-[1120px] table-fixed border-separate border-spacing-0 text-sm">
                 <colgroup><col className="w-28" /><col className="w-56" /><col className="w-56" /><col className="w-36" /><col className="w-28" /><col className="w-28" /><col className="w-28" /><col className="w-28" /><col className="w-24" /></colgroup>
                 <thead className="sticky top-0 z-10 bg-slate-50"><tr>{['Criacao', 'Descricao', 'Mensagem', 'Periodicidade', 'Inicio', 'Fim', 'Hora Inicio', 'Status', 'Acoes'].map((h) => <th key={h} className={thClass}>{h}</th>)}</tr></thead>

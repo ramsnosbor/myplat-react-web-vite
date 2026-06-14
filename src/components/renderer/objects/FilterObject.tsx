@@ -69,9 +69,18 @@ export function FilterObject({ objectDef }: Props) {
     const cleanParams: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(values)) {
       if (v === '' || v === null || v === undefined) continue
+      // Campos __label são apenas display (label do autocomplete) — nunca vão como filtro
+      if (k.endsWith('__label')) continue
 
       if (typeof v === 'string') {
+        // Range de datas: valor "inicio,fim" — descarta se ambos os lados estão vazios
         const comp = objectDef.components?.find((c) => (c.nameForm ?? c.name) === k)
+        if (comp?.range && comp.type === 'date') {
+          const [start, end] = v.split(',')
+          if (!start && !end) continue  // "," ou "" → ignora
+          cleanParams[k] = v
+          continue
+        }
         if (comp && TEXT_FIELD_TYPES.has(comp.type)) {
           const op = getOperator(k)
           const opDef = OPERATORS.find((o) => o.key === op) ?? OPERATORS[0]
@@ -117,7 +126,10 @@ export function FilterObject({ objectDef }: Props) {
   function handleCreate(e: React.MouseEvent) {
     e.stopPropagation() // não abre/fecha o collapse ao clicar em Novo
     if (objectDef.createUrl) {
-      navigate(`/home/${objectDef.createUrl}`)
+      // Interpola {{campo}} usando os valores do formulário + initialParams (querystring)
+      const values = { ...ctx, ...form.getValues() } as Record<string, unknown>
+      const resolvedUrl = interpolate(objectDef.createUrl, values)
+      navigate(`/home/${resolvedUrl}`)
     }
     // createObject (modal) → implementar quando houver suporte a modais
   }

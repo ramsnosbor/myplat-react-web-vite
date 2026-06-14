@@ -92,3 +92,8 @@
     min-height: 100vh;
   }
 }
+
+/* react-pivottable overrides */
+.pvtAxisContainer.pvtHorizList.pvtCols {
+  width: 100% !important;
+}

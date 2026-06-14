@@ -116,8 +116,8 @@ export default function UsuarioPerfisPage() {
 
   return (
     <AppShell title="Usuarios e Perfis" subtitle="Vinculo entre usuarios e perfis de acesso.">
-      <div className="min-h-full bg-background p-4 sm:p-6">
-        <div className="mx-auto max-w-7xl space-y-4">
+      <div className="min-h-full w-full bg-background p-3 sm:p-4">
+        <div className="w-full space-y-4">
           <section className="rounded-lg border border-blue-100 bg-white p-4 shadow-sm shadow-blue-950/5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
@@ -161,7 +161,7 @@ export default function UsuarioPerfisPage() {
                 </div>
               </div>
 
-              <div className="max-h-[calc(100vh-390px)] overflow-auto">
+              <div className="max-h-[calc(100vh-350px)] overflow-auto">
                 <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
                   <colgroup>
                     <col />
@@ -258,7 +258,7 @@ export default function UsuarioPerfisPage() {
                   Carregando perfis...
                 </div>
               ) : (
-                <div className="max-h-[calc(100vh-390px)] overflow-auto">
+                <div className="max-h-[calc(100vh-350px)] overflow-auto">
                   <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
                     <colgroup>
                       <col />

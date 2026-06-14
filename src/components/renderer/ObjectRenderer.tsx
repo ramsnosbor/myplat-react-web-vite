@@ -9,6 +9,10 @@ import { PanelObject } from './objects/PanelObject'
 import { GridObject } from './objects/GridObject'
 import { BulkEditTableObject } from './objects/BulkEditTableObject'
 import { IframeObject } from './objects/IframeObject'
+import { TreeObject } from './objects/TreeObject'
+import { QuestionarioBuilderObject } from './objects/QuestionarioBuilderObject'
+import { QuestionarioResponderObject } from './objects/QuestionarioResponderObject'
+import { QuestionarioModeloObject } from './objects/QuestionarioModeloObject'
 
 // Lazy: isola recharts num chunk separado, evitando o bug de bundling em prod
 const ChartObject = lazy(() => import('./objects/ChartObject').then((m) => ({ default: m.ChartObject })))
@@ -51,22 +55,39 @@ export function useConnectionParams(objectId: string): Record<string, unknown> {
       ),
     )
 
+    // Considera qualquer valor definido (inclusive 0) como válido para propagar ao filho.
+    // O valor 0 pode ser um ID legítimo (ex: nfe_status com id_nfe_status=0).
+    // Quando o pai está em create mode e o ID ainda não existe, useConnectionEnabled
+    // já bloqueia a query do filho — aqui não precisamos filtrar 0.
+    const hasValue = (v: unknown) =>
+      v !== undefined && v !== null && v !== ''
+
+    // Heurística: parentKey que começa com "id_" é sempre referência de campo,
+    // mesmo que não esteja declarado nos componentes (ex: PK gerada pelo backend).
+    // Valores literais estáticos (ex: "Financeiro", "Ativo") nunca começam com "id_".
+    const isFieldRef = (parentKey: string) =>
+      parentFieldNames.has(parentKey) || parentKey.startsWith('id_')
+
     const params: Record<string, unknown> = {}
     for (const [childKey, parentKey] of Object.entries(connection.keys)) {
-      const fieldValue =
-        parentState.selectedRow?.[parentKey] ??
-        parentState.formData?.[parentKey] ??
-        parentState.queryParams?.[parentKey]
+      // Prioridade: selectedRow (click na tabela) > queryParams (ação explícita) > formData
+      const fromSelectedRow = parentState.selectedRow?.[parentKey]
+      const fromQueryParams = parentState.queryParams?.[parentKey]
+      const fromFormData = hasValue(parentState.formData?.[parentKey])
+        ? parentState.formData?.[parentKey]
+        : undefined
+
+      const fieldValue = fromSelectedRow ?? fromQueryParams ?? fromFormData
 
       if (fieldValue !== undefined && fieldValue !== null && fieldValue !== '') {
         // Valor encontrado no estado do pai → usa
         params[childKey] = fieldValue
-      } else if (!parentFieldNames.has(parentKey)) {
-        // parentKey NÃO é campo do pai → valor literal estático
+      } else if (!isFieldRef(parentKey)) {
+        // parentKey NÃO é referência de campo → valor literal estático
         // Ex: { "origem": "Financeiro" } → params.origem = "Financeiro"
         params[childKey] = parentKey
       }
-      // parentKey É campo do pai mas sem valor → omite (pai ainda não tem o ID)
+      // parentKey é referência de campo mas sem valor no pai → omite
     }
     return params
   }, [connection, parentState, definition])
@@ -85,6 +106,8 @@ export function useConnectionEnabled(objectId: string): boolean {
   )
 
   if (!connection) return true // sem connection → sempre habilitado
+  // Conexão soft (declarada dentro do objeto) → não bloqueia, existe só para invalidação
+  if (connection.blocking === false) return true
 
   // Campos declarados nos componentes do pai
   const parentObj = definition.objects.find((o) => o.id === connection.parent)
@@ -94,15 +117,25 @@ export function useConnectionEnabled(objectId: string): boolean {
     ),
   )
 
+  // Heurística: parentKey que começa com "id_" é sempre referência de campo,
+  // mesmo que não esteja declarado nos componentes (ex: PK gerada pelo backend).
+  const isFieldRef = (parentKey: string) =>
+    parentFieldNames.has(parentKey) || parentKey.startsWith('id_')
+
   // Chaves que são referências a campos do pai (não literais)
   const fieldRefKeys = Object.entries(connection.keys).filter(([, parentKey]) =>
-    parentFieldNames.has(parentKey),
+    isFieldRef(parentKey),
   )
 
   if (fieldRefKeys.length === 0) {
     // Todas as chaves são literais → sempre habilitado
     return true
   }
+
+  // Se o pai está em create mode, o registro ainda não foi salvo —
+  // não há FK real para filtrar o filho. Bloqueia a query para evitar
+  // retornar todos os registros do banco sem filtro.
+  if (parentState?.mode === 'create') return false
 
   // Tem referências de campo → habilita somente quando ao menos uma tem valor no pai
   const dynamicEntries = fieldRefKeys.filter(([, parentKey]) => {
@@ -114,6 +147,20 @@ export function useConnectionEnabled(objectId: string): boolean {
   })
 
   return dynamicEntries.length > 0
+}
+
+/**
+ * Retorna true se o pai direto deste objeto está em modo 'create'.
+ * Usado para desabilitar ações de filhos enquanto o registro pai não foi salvo.
+ */
+export function useParentIsCreating(objectId: string): boolean {
+  const { connections, viewStore } = useViewContext()
+  const connection = connections.find(
+    (c) => c.child === objectId && c.blocking !== false,
+  )
+  return useStore(viewStore, (s) =>
+    connection ? s.objects[connection.parent]?.mode === 'create' : false,
+  )
 }
 
 // ─── ObjectRenderer ───────────────────────────────────────────────────────────
@@ -157,6 +204,14 @@ export function ObjectRenderer({ objectDef }: ObjectRendererProps) {
       return <BulkEditTableObject objectDef={objectDef} />
     case 'iframe':
       return <IframeObject objectDef={objectDef} />
+    case 'tree':
+      return <TreeObject objectDef={objectDef} />
+    case 'questionarioBuilder':
+      return <QuestionarioBuilderObject objectDef={objectDef} />
+    case 'questionarioResponder':
+      return <QuestionarioResponderObject objectDef={objectDef} />
+    case 'questionarioModelo':
+      return <QuestionarioModeloObject objectDef={objectDef} />
     default:
       return (
         <div className="rounded-md border border-border p-4 text-sm text-muted-foreground">

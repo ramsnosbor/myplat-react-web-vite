@@ -1,3 +1,4 @@
+import { useState, useRef } from 'react'
 import { useWatch, useController } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
 import type {
@@ -16,6 +17,8 @@ import { DateField } from './DateField'
 import { NumberField } from './NumberField'
 import { CpfCnpjField, PhoneNumberField, EmailField } from './MaskedField'
 import { CepField } from './CepField'
+import { QuestionarioInlineComponent } from './QuestionarioInlineComponent'
+import { apiClient } from '@/api/client'
 import { evalExpr } from '@/utils/evalExpr'
 import { useViewContext } from '../ViewContext'
 import { resolveColClass } from '@/utils/colClass'
@@ -51,7 +54,17 @@ export function FieldRenderer({ component: comp, register, control, setValue, wa
     : typeof comp.disabled === 'string'
       ? !!evalExpr(comp.disabled, formValues)
       : false
-  const isDisabled = disabled || disabledByProp || !!comp.disabledOn?.includes(mode)
+
+  // disabledRule: suporta formato legado {campo}=value e novo {{campo}}===value.
+  // Converte chave simples {campo} → {{campo}} para compatibilidade com evalExpr.
+  const disabledByRule = comp.disabledRule
+    ? !!evalExpr(
+        comp.disabledRule.replace(/(?<!\{)\{(\w+)\}(?!\})/g, '{{$1}}'),
+        formValues,
+      )
+    : false
+
+  const isDisabled = disabled || disabledByProp || disabledByRule || !!comp.disabledOn?.includes(mode)
 
   const rawLabel = comp.label ?? comp.name
   const label = rawLabel?.includes('{{') ? String(evalExpr(rawLabel, formValues) ?? rawLabel) : rawLabel
@@ -170,6 +183,21 @@ export function FieldRenderer({ component: comp, register, control, setValue, wa
         </div>
       )
 
+    case 'fileupload':
+    case 'file':
+      return (
+        <div className={colClass}>
+          <FileUploadField component={comp} control={control} setValue={setValue} disabled={isDisabled} mode={mode} />
+        </div>
+      )
+
+    case 'password':
+      return wrapField(
+        <input type="password" placeholder={comp.placeholder ?? ''} maxLength={comp.maxLength ?? undefined}
+          disabled={isDisabled} className={inputClass} autoComplete="current-password"
+          {...register(fieldName, registerOpts)} />
+      )
+
     case 'text':
     case 'mask':
       return wrapField(
@@ -270,6 +298,9 @@ export function FieldRenderer({ component: comp, register, control, setValue, wa
             dangerouslySetInnerHTML={{ __html: comp.template ?? comp.defaultValue as string ?? '' }} />
         </div>
       )
+
+    case 'questionarioInline':
+      return <QuestionarioInlineComponent component={comp} control={control} mode={mode} />
 
     default:
       return wrapField(
@@ -428,6 +459,140 @@ function LinkPanelField({ component: comp }: { component: ComponentDefinition })
         <i className="bi bi-chevron-right shrink-0 text-xs text-muted-foreground mt-0.5" />
       </div>
     </button>
+  )
+}
+
+// ─── FileUploadField ──────────────────────────────────────────────────────────
+
+interface FileUploadFieldProps {
+  component: ComponentDefinition
+  control: Control<Record<string, unknown>>
+  setValue: UseFormSetValue<Record<string, unknown>>
+  disabled?: boolean
+  mode?: string
+}
+
+function FileUploadField({ component: comp, control, setValue, disabled, mode }: FileUploadFieldProps) {
+  const fieldName = comp.nameForm ?? comp.name
+  const label     = comp.label ?? comp.name
+
+  const { field, fieldState } = useController({ name: fieldName, control })
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [downloading, setDownloading] = useState(false)
+
+  // Valor atual: File (novo) ou objeto {id, name} (existente do banco)
+  const currentValue = field.value as File | { id?: string | number; name?: string } | string | null | undefined
+  const existingFile = currentValue && !(currentValue instanceof File) && typeof currentValue === 'object'
+    ? currentValue as { id?: string | number; name?: string }
+    : null
+  const selectedFile = currentValue instanceof File ? currentValue : null
+  const displayName  = selectedFile?.name ?? existingFile?.name ?? (typeof currentValue === 'string' ? currentValue : '') || 'Nenhum arquivo selecionado'
+  const hasFile      = !!(selectedFile || existingFile?.id)
+
+  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) {
+      field.onChange(file)
+      setValue(fieldName, file)
+    }
+  }
+
+  async function handleDownload() {
+    const fileId = existingFile?.id
+    if (!fileId) return
+    setDownloading(true)
+    try {
+      const response = await apiClient.get(`/files/${fileId}/download`, { responseType: 'blob' })
+      const url  = URL.createObjectURL(response.data as Blob)
+      const link = document.createElement('a')
+      link.href     = url
+      link.download = existingFile?.name ?? String(fileId)
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch {
+      // silencioso — erro de download não deve travar o form
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  function handleClear() {
+    field.onChange(null)
+    setValue(fieldName, null)
+    if (inputRef.current) inputRef.current.value = ''
+  }
+
+  const isCreate = mode === 'create'
+  const showDownload = comp.download && !isCreate && !!existingFile?.id
+
+  return (
+    <div className="space-y-1">
+      {label && (
+        <label className="text-sm font-medium">
+          {label}
+          {comp.required && <span className="ml-0.5 text-destructive" aria-hidden>*</span>}
+        </label>
+      )}
+
+      <div className="flex items-center gap-2">
+        {/* Botão escolher */}
+        {!disabled && (
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm hover:bg-accent transition-colors"
+          >
+            <i className="bi bi-paperclip text-xs" />
+            Escolher arquivo
+          </button>
+        )}
+
+        {/* Nome do arquivo */}
+        <span className={`flex-1 truncate rounded-md border border-input bg-background px-3 py-2 text-sm ${disabled ? 'opacity-50' : ''} ${hasFile ? 'text-foreground' : 'text-muted-foreground'}`}>
+          {displayName}
+        </span>
+
+        {/* Limpar */}
+        {!disabled && hasFile && (
+          <button type="button" onClick={handleClear} title="Remover arquivo" className="text-muted-foreground hover:text-foreground transition-colors">
+            <i className="bi bi-x-circle" />
+          </button>
+        )}
+
+        {/* Download */}
+        {showDownload && (
+          <button
+            type="button"
+            onClick={handleDownload}
+            disabled={downloading}
+            title="Baixar arquivo"
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm hover:bg-accent transition-colors disabled:opacity-50"
+          >
+            {downloading
+              ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              : <i className="bi bi-download text-xs" />}
+          </button>
+        )}
+      </div>
+
+      {/* Input nativo escondido */}
+      <input
+        ref={inputRef}
+        type="file"
+        accept={comp.accept}
+        className="sr-only"
+        onChange={handleInputChange}
+      />
+
+      {fieldState.error && (
+        <p className="text-xs text-destructive">{fieldState.error.message}</p>
+      )}
+      {comp.description && (
+        <p className="text-xs text-muted-foreground">{comp.description}</p>
+      )}
+    </div>
   )
 }
 

@@ -1,7 +1,9 @@
-import { lazy, Suspense } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom'
+import { lazy, Suspense, useEffect, useState } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
-import { isClienteToken } from '@/pages/auth/authFlow'
+import { isClienteToken, isFullAdminToken, getTenantModuleIds, filterModules, resolveHomePath } from '@/pages/auth/authFlow'
+import { authApi } from '@/api/auth.api'
+import { getSharedTenant } from '@/api/client'
 
 // ─── Lazy pages ───────────────────────────────────────────────────────────────
 
@@ -26,6 +28,7 @@ const MessagesDefinitionPage = lazy(() => import('@/pages/system/MessagesDefinit
 const MessagesDefinitionFormPage = lazy(() => import('@/pages/system/MessagesDefinitionFormPage'))
 const DFeConsultaPage = lazy(() => import('@/pages/system/DFeConsultaPage'))
 const ReportViewerPage = lazy(() => import('@/pages/system/ReportViewerPage'))
+const ReportsListPage = lazy(() => import('@/pages/system/ReportsListPage'))
 
 // ─── Loading fallback ─────────────────────────────────────────────────────────
 
@@ -40,10 +43,104 @@ function PageLoader() {
 // ─── Guard: rotas protegidas ──────────────────────────────────────────────────
 
 function ProtectedLayout() {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated())
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />
-  }
+  const token = useAuthStore((s) => s.token)
+  const tenant = useAuthStore((s) => s.tenant)
+  const hasHydrated = useAuthStore((s) => s._hasHydrated)
+  const { setUser, setTenant, setAcl, setModules, logout } = useAuthStore()
+  const navigate = useNavigate()
+  const [restoring, setRestoring] = useState(false)
+
+  useEffect(() => {
+    // Aguarda Zustand terminar a reidratação do localStorage antes de agir.
+    // Sem isso, um F5 normal com tenant no localStorage dispararia o restore
+    // desnecessariamente enquanto a reidratação ainda não chegou.
+    if (!hasHydrated) return
+    // Nenhum token → guard abaixo cuida do redirect
+    if (!token) return
+    // Tenant já carregado → sessão completa (F5 normal ou login normal)
+    if (tenant) return
+
+    // Token presente mas sem tenant → chegou do Maker com cookie compartilhado.
+    // Restaura sessão chamando as APIs com o token existente (sem selectTenant).
+    setRestoring(true)
+
+    // Tenta ler tenant dos cookies do Maker para não depender do getLoggedUser
+    const sharedTenant = getSharedTenant()
+
+    const apiCalls = sharedTenant
+      ? ([authApi.getPermissions(), authApi.getSystemModules()] as const)
+      : ([authApi.getLoggedUser(), authApi.getPermissions(), authApi.getSystemModules()] as const)
+
+    Promise.all(apiCalls)
+      .then((results) => {
+        let tenantCode: string | undefined
+        let tenantLabel: string
+
+        if (sharedTenant) {
+          const [perms, allModules] = results as [
+            Awaited<ReturnType<typeof authApi.getPermissions>>,
+            Awaited<ReturnType<typeof authApi.getSystemModules>>,
+          ]
+          tenantCode = sharedTenant.code
+          tenantLabel = sharedTenant.label
+
+          if (!tenantCode) throw new Error('tenant indisponível nos cookies')
+
+          const tenantModuleIds = getTenantModuleIds(token)
+          const isClienteAccess = isClienteToken(token) ||
+            (perms.perfis ?? []).some((p) => String(p.tipo ?? '').toUpperCase() === 'CLIENTE')
+          const homePath = resolveHomePath(perms, allModules, isClienteAccess)
+
+          setTenant({ code: tenantCode, label: tenantLabel })
+          setAcl(perms.menus, homePath)
+          setModules(filterModules(allModules, perms.menus, tenantModuleIds, {
+            failClosed: isClienteAccess,
+            unrestricted: isFullAdminToken(token),
+          }))
+          navigate(homePath, { replace: true })
+          return
+        }
+
+        const [userData, perms, allModules] = results as [
+          Awaited<ReturnType<typeof authApi.getLoggedUser>>,
+          Awaited<ReturnType<typeof authApi.getPermissions>>,
+          Awaited<ReturnType<typeof authApi.getSystemModules>>,
+        ]
+        tenantCode = perms.tenantCode ?? userData.tenant?.code
+        tenantLabel = userData.tenant?.name ?? userData.tenant?.description ?? tenantCode ?? ''
+
+        if (!tenantCode) throw new Error('tenant indisponível no token')
+
+        const tenantModuleIds = getTenantModuleIds(token)
+        const isClienteAccess =
+          isClienteToken(token) ||
+          String(userData.type ?? '').toUpperCase() === 'CLIENTE' ||
+          (perms.perfis ?? []).some((p) => String(p.tipo ?? '').toUpperCase() === 'CLIENTE')
+        const homePath = resolveHomePath(perms, allModules, isClienteAccess)
+
+        setUser(userData)
+        setTenant({ code: tenantCode, label: tenantLabel })
+        setAcl(perms.menus, homePath)
+        setModules(
+          filterModules(allModules, perms.menus, tenantModuleIds, {
+            failClosed: isClienteAccess,
+            unrestricted: isFullAdminToken(token),
+          }),
+        )
+        navigate(homePath, { replace: true })
+      })
+      .catch(() => {
+        logout()
+        navigate('/login', { replace: true })
+      })
+      .finally(() => setRestoring(false))
+  }, [hasHydrated, token, tenant]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Aguarda reidratação antes de redirecionar — evita flash de login
+  if (!hasHydrated) return <PageLoader />
+  if (!token) return <Navigate to="/login" replace />
+  if (restoring || !tenant) return <PageLoader />
+
   return <Outlet />
 }
 
@@ -185,6 +282,7 @@ export function AppRouter() {
               <Route path="/MessagesDefinitionCreateEdit" element={<MessagesDefinitionFormPage />} />
               <Route path="/dfe-consulta" element={<DFeConsultaPage />} />
               <Route path="/dfe-emitentes" element={<DFeConsultaPage initialTopTab="emitentes" />} />
+              <Route path="/reports" element={<ReportsListPage />} />
               <Route path="/report-viewer" element={<ReportViewerPage />} />
             </Route>
           </Route>

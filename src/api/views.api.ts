@@ -57,19 +57,23 @@ function normalize(raw: RawViewResponse): ViewDefinition {
     return rawConns.flatMap((conn: any) => {
       if (typeof conn === 'string') {
         // Formato B: string → child ID, chave derivada por convenção
+        // blocking: false → conexão soft (invalida query após submit, não bloqueia filhos)
         return [{
           parent: obj.id,
           child: conn,
           keys: implicitKey ? { [implicitKey]: implicitKey } : {},
+          blocking: false,
         }]
       }
       if (conn && typeof conn === 'object' && conn.child) {
         // Formato A: objeto com child (+ keys opcionais)
-        return [{ parent: obj.id, ...conn }]
+        // blocking: false por padrão para conexões declaradas dentro do objeto
+        return [{ parent: obj.id, blocking: false, ...conn }]
       }
       return []
     })
   })
+  // Conexões globais (view.connections raiz) são bloqueantes por padrão
   const allConnections = [...(view.connections ?? []), ...objectConnections]
 
   const navbars: Navbar[] = (view.navbars ?? []).map((nav: any) => {

@@ -20,8 +20,11 @@ interface DateFieldProps {
  * - month     → mês/ano
  * - year      → apenas ano
  *
- * Com `range: true`: renderiza dois campos (início e fim).
- * O campo fim é nomeado por `rangeParam` (ou nameForm + "_fim").
+ * Com `range: true`: renderiza dois inputs (início e fim) num único campo.
+ * O valor é armazenado como "início,fim" (ex: "2024-01-01,2024-12-31").
+ * O sistema de filtro interpreta esse formato como BETWEEN.
+ * Se apenas um dos lados estiver preenchido, envia "início," ou ",fim" (range aberto).
+ * Se ambos estiverem vazios, o campo fica "" e é ignorado pelo filtro.
  */
 export function DateField({ component: comp, control, setValue: _setValue, disabled, inputClass, error, mode: _mode }: DateFieldProps) {
   const fieldName = comp.nameForm ?? comp.name
@@ -37,12 +40,12 @@ export function DateField({ component: comp, control, setValue: _setValue, disab
   const inputType = resolveInputType(variant)
 
   // ─── Range ──────────────────────────────────────────────────────────────────
+  // Armazena tudo em UM único campo: "inicio,fim"
+  // Exemplos: "2024-01-01,2024-12-31" | "2024-01-01," | ",2024-12-31" | ""
   if (comp.range) {
-    const endFieldName = comp.rangeParam ?? `${fieldName}_fim`
     return (
       <RangeDateField
         fieldName={fieldName}
-        endFieldName={endFieldName}
         label={label}
         inputType={inputType}
         control={control}
@@ -111,10 +114,11 @@ export function DateField({ component: comp, control, setValue: _setValue, disab
 }
 
 // ─── Sub-componente para range ────────────────────────────────────────────────
+// Campo único no form com valor "inicio,fim".
+// Dois inputs visuais que lêem/escrevem nesse campo ao mesmo tempo.
 
 interface RangeDateFieldProps {
   fieldName: string
-  endFieldName: string
   label: string
   inputType: string
   control: Control<Record<string, unknown>>
@@ -125,13 +129,26 @@ interface RangeDateFieldProps {
 }
 
 function RangeDateField({
-  fieldName, endFieldName, label, inputType, control, disabled, inputClass, required, error,
+  fieldName, label, inputType, control, disabled, inputClass, required, error,
 }: RangeDateFieldProps) {
-  const { field: startField } = useController({ name: fieldName, control })
-  const { field: endField } = useController({ name: endFieldName, control })
+  const { field } = useController({ name: fieldName, control })
 
-  const startValue = startField.value !== undefined && startField.value !== null ? String(startField.value) : ''
-  const endValue = endField.value !== undefined && endField.value !== null ? String(endField.value) : ''
+  // Parseia "inicio,fim" — primeiro vírgula separa os dois lados
+  const rawValue = field.value !== undefined && field.value !== null ? String(field.value) : ''
+  const commaIdx = rawValue.indexOf(',')
+  const startValue = commaIdx >= 0 ? rawValue.slice(0, commaIdx) : rawValue
+  const endValue   = commaIdx >= 0 ? rawValue.slice(commaIdx + 1) : ''
+
+  function handleStartChange(newStart: string) {
+    // Ambos vazios → campo vazio (filtrado pelo applyFilter)
+    if (!newStart && !endValue) { field.onChange(''); return }
+    field.onChange(`${newStart},${endValue}`)
+  }
+
+  function handleEndChange(newEnd: string) {
+    if (!startValue && !newEnd) { field.onChange(''); return }
+    field.onChange(`${startValue},${newEnd}`)
+  }
 
   return (
     <div className="space-y-1">
@@ -145,9 +162,9 @@ function RangeDateField({
         <input
           type={inputType}
           value={startValue}
-          onChange={(e) => startField.onChange(e.target.value)}
-          onBlur={startField.onBlur}
-          ref={startField.ref}
+          onChange={(e) => handleStartChange(e.target.value)}
+          onBlur={field.onBlur}
+          ref={field.ref}
           disabled={disabled}
           className={inputClass}
           placeholder="Início"
@@ -156,9 +173,8 @@ function RangeDateField({
         <input
           type={inputType}
           value={endValue}
-          onChange={(e) => endField.onChange(e.target.value)}
-          onBlur={endField.onBlur}
-          ref={endField.ref}
+          onChange={(e) => handleEndChange(e.target.value)}
+          onBlur={field.onBlur}
           disabled={disabled}
           className={inputClass}
           placeholder="Fim"

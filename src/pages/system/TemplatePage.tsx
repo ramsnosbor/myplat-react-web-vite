@@ -37,8 +37,8 @@ export default function TemplatePage() {
 
   return (
     <AppShell title="Templates" subtitle="Modelos usados em comunicacoes e mensagens.">
-      <div className="min-h-full bg-background p-4 sm:p-6">
-        <div className="mx-auto max-w-7xl space-y-4">
+      <div className="min-h-full w-full bg-background p-3 sm:p-4">
+        <div className="w-full space-y-4">
           <section className="rounded-lg border border-blue-100 bg-white p-4 shadow-sm shadow-blue-950/5">
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
@@ -72,7 +72,7 @@ export default function TemplatePage() {
 
           <section className="rounded-lg border border-blue-100 bg-white shadow-sm shadow-blue-950/5">
             <div className="overflow-hidden rounded-lg">
-              <div className="max-h-[calc(100vh-342px)] overflow-auto">
+              <div className="max-h-[calc(100vh-310px)] overflow-auto">
                 <table className="w-full min-w-[980px] table-fixed border-separate border-spacing-0 text-sm">
                   <colgroup>
                     <col className="w-20" />

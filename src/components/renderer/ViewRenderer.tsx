@@ -179,10 +179,11 @@ function NavbarSection({
   navbar: Navbar
   allObjects: ObjectDefinition[]
 }) {
-  const { initialParams = {} } = useViewContext()
+  const { initialParams = {}, screenParams = {} } = useViewContext()
 
-  // Contexto de avaliação: initialParams (tipo_nfe, etc. vindos da URL)
-  const exprContext = initialParams as Record<string, unknown>
+  // Contexto de avaliação: screenParams (parâmetros SSO como UTILIZA_PLANO_GERENCIAL)
+  // + initialParams (parâmetros de URL como tipo_nfe)
+  const exprContext = { ...screenParams, ...initialParams } as Record<string, unknown>
 
   // Filtra tabs visíveis avaliando `tab.visible`
   const visibleTabs = navbar.tabs.filter((tab) => {
@@ -339,16 +340,23 @@ function ModalWrapper({ objectDef }: { objectDef: ObjectDefinition }) {
     setObjectState(objectDef.id, { mode: null, selectedRow: null, formData: null })
   }
 
-  const sizeClass = MODAL_SIZE[objectDef.size ?? 'lg'] ?? 'max-w-2xl'
+  // keepOpen: true → modal só fecha por action explícita (cancel / closeObject).
+  // Desabilita o clique no backdrop e oculta o botão ×.
+  const keepOpen = objectDef.keepOpen === true
+
+  const isFullscreen = objectDef.fullscreen === true
+  const sizeClass = isFullscreen ? 'max-w-full' : (MODAL_SIZE[objectDef.size ?? 'lg'] ?? 'max-w-2xl')
   const centeredClass = objectDef.centered !== false ? 'items-center' : 'items-start pt-16'
+  const modalHeightClass = isFullscreen ? 'h-screen rounded-none' : 'max-h-[90vh] rounded-lg'
+  const paddingClass = isFullscreen ? 'p-0' : 'p-4'
 
   return createPortal(
     <div
-      className={`fixed inset-0 z-50 flex ${centeredClass} justify-center bg-black/50 p-4`}
-      onClick={(e) => { if (e.target === e.currentTarget) handleClose() }}
+      className={`fixed inset-0 z-50 flex ${isFullscreen ? 'items-stretch' : centeredClass} justify-center bg-black/50 ${paddingClass}`}
+      onClick={(e) => { if (!keepOpen && e.target === e.currentTarget) handleClose() }}
     >
       <div
-        className={`relative w-full ${sizeClass} max-h-[90vh] overflow-hidden rounded-lg bg-background shadow-xl flex flex-col`}
+        className={`relative w-full ${sizeClass} ${modalHeightClass} overflow-hidden bg-background shadow-xl flex flex-col`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header do modal */}

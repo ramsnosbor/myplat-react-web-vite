@@ -77,8 +77,8 @@ export default function UsuarioListPage() {
 
   return (
     <AppShell title="Lista de Usuarios" subtitle="Consulta e administracao de usuarios do ambiente.">
-      <div className="min-h-full bg-background p-4 sm:p-6">
-        <div className="mx-auto max-w-7xl space-y-4">
+      <div className="min-h-full w-full bg-background p-3 sm:p-4">
+        <div className="w-full space-y-4">
           <section className="rounded-lg border border-blue-100 bg-white p-4 shadow-sm shadow-blue-950/5">
             <div className="mb-4 flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-md bg-blue-700 text-white">
@@ -143,7 +143,7 @@ export default function UsuarioListPage() {
 
           <section className="rounded-lg border border-blue-100 bg-white shadow-sm shadow-blue-950/5">
             <div className="overflow-hidden rounded-lg">
-              <div className="max-h-[calc(100vh-360px)] overflow-auto">
+              <div className="max-h-[calc(100vh-330px)] overflow-auto">
                 <table className="w-full border-separate border-spacing-0 text-sm">
                   <thead className="sticky top-0 z-10 bg-slate-50">
                     <tr>

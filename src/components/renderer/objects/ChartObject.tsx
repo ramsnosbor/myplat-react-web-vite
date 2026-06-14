@@ -4,6 +4,7 @@ import { useViewContext } from '../ViewContext'
 import { useConnectionParams, useConnectionEnabled } from '../ObjectRenderer'
 import type { ObjectDefinition, ComponentDefinition } from '@/types/view.types'
 import type { EntityRecord } from '@/types/entity.types'
+import { PivotTableRenderer } from '../PivotTableRenderer'
 import {
   ResponsiveContainer,
   BarChart, Bar,
@@ -53,7 +54,7 @@ export function ChartObject({ objectDef }: Props) {
     (c) => c.idObject === objectDef.id
   )
 
-  const chartType = (chartComp?.type ?? 'bar') as 'bar' | 'line' | 'pie'
+  const chartType = (chartComp?.type ?? 'bar') as 'bar' | 'line' | 'pie' | 'pivot'
   const xAxisKey = chartComp?.XAxis ?? ''
   const yAxisItems = resolveYAxis(chartComp?.YAxis)
 
@@ -94,6 +95,17 @@ export function ChartObject({ objectDef }: Props) {
     return (
       <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
         Sem dados para exibir.
+      </div>
+    )
+  }
+
+  if (chartType === 'pivot') {
+    return (
+      <div style={objectDef.style as React.CSSProperties}>
+        {objectDef.title && (
+          <h3 className="mb-3 text-sm font-semibold text-foreground">{objectDef.title}</h3>
+        )}
+        <PivotTableRenderer data={rows as Record<string, unknown>[]} />
       </div>
     )
   }

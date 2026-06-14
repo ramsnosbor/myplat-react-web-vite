@@ -1,29 +1,46 @@
 import axios, { type AxiosInstance } from 'axios'
 import Cookies from 'js-cookie'
 
-// ─── Configuração de cookie ────────────────────────────────────────────────────
+// ─── Nomes de cookie — padrão compartilhado com o Maker ──────────────────────
+// Devem ser idênticos ao COOKIE_NAMES do cookieManager.js do Maker.
 
-const TOKEN_KEY = 'myplat_token'
+export const TOKEN_KEY         = 'myplat_auth_token'
+export const COOKIE_TENANT_ID  = 'myplat_app_tenant_id'
+export const COOKIE_TENANT_LABEL = 'myplat_app_tenant_label'
 
 const COOKIE_DOMAIN = import.meta.env.VITE_COOKIE_DOMAIN as string | undefined
-const COOKIE_DAYS  = Number(import.meta.env.VITE_COOKIE_EXPIRATION_DAYS ?? 7)
+const COOKIE_DAYS   = Number(import.meta.env.VITE_COOKIE_EXPIRATION_DAYS ?? 7)
+
+// ─── Leitura com suporte a chunk ──────────────────────────────────────────────
+// O Maker divide tokens > 4000 chars em cookies ${name}_chunk0, _chunk1 …
+// e um cookie de controle ${name}_chunks com a contagem.
+
+function readCookieWithChunks(name: string): string | null {
+  const direct = Cookies.get(name)
+  if (direct) return direct
+
+  const chunksCountStr = Cookies.get(`${name}_chunks`)
+  if (!chunksCountStr) return null
+
+  const count = parseInt(chunksCountStr, 10)
+  if (isNaN(count) || count <= 0) return null
+
+  let value = ''
+  for (let i = 0; i < count; i++) {
+    const chunk = Cookies.get(`${name}_chunk${i}`)
+    if (!chunk) return null
+    value += chunk
+  }
+  return value || null
+}
 
 // ─── Token em memória ──────────────────────────────────────────────────────────
-// Fonte de verdade para as chamadas axios (sem acesso ao DOM).
-// Na inicialização do módulo, lê do cookie (persistente entre sessões) e,
-// como fallback, do sessionStorage (compatibilidade com sessões anteriores).
 
 let _token: string | null =
-  Cookies.get(TOKEN_KEY) ??
+  readCookieWithChunks(TOKEN_KEY) ??
   sessionStorage.getItem(TOKEN_KEY) ??
   null
 
-/**
- * Salva o token nos três lugares:
- *   1. Variável de módulo  → usada imediatamente pelo axios interceptor
- *   2. Cookie              → persiste entre sessões / abas / subdomínios
- *   3. sessionStorage      → fallback por aba (compatibilidade)
- */
 export function setClientToken(token: string | null) {
   _token = token
 
@@ -32,12 +49,11 @@ export function setClientToken(token: string | null) {
       expires: COOKIE_DAYS,
       domain: COOKIE_DOMAIN,
       sameSite: 'Lax',
-      // secure: true → habilitar em produção (HTTPS obrigatório)
+      secure: COOKIE_DOMAIN !== undefined,
     })
     sessionStorage.setItem(TOKEN_KEY, token)
   } else {
     Cookies.remove(TOKEN_KEY, { domain: COOKIE_DOMAIN })
-    // Remove também sem domain para garantir limpeza em dev (localhost)
     Cookies.remove(TOKEN_KEY)
     sessionStorage.removeItem(TOKEN_KEY)
   }
@@ -45,6 +61,15 @@ export function setClientToken(token: string | null) {
 
 export function getClientToken(): string | null {
   return _token
+}
+
+// ─── Tenant dos cookies compartilhados ───────────────────────────────────────
+// Usados na restauração de sessão ao chegar do Maker.
+
+export function getSharedTenant(): { code: string; label: string } | null {
+  const code = Cookies.get(COOKIE_TENANT_ID)
+  if (!code) return null
+  return { code, label: Cookies.get(COOKIE_TENANT_LABEL) ?? code }
 }
 
 // ─── Helper de redirect ───────────────────────────────────────────────────────
@@ -78,14 +103,12 @@ function createClient(baseURL: string): AxiosInstance {
     headers: { 'Content-Type': 'application/json' },
   })
 
-  // Injeta Authorization: Bearer <token> em todas as requisições
   instance.interceptors.request.use((config) => {
     const token = getClientToken()
     if (token) config.headers.Authorization = `Bearer ${token}`
     return config
   })
 
-  // 401 → limpa token e redireciona ao login
   instance.interceptors.response.use(
     (res) => res,
     (error) => {
@@ -101,17 +124,14 @@ function createClient(baseURL: string): AxiosInstance {
 
 // ─── Clientes ─────────────────────────────────────────────────────────────────
 
-/** API principal: entidades, scripts, views. */
 export const apiClient = createClient(
   import.meta.env.VITE_API_URL ?? 'http://localhost:3000',
 )
 
-/** SSO / Auth: login, MFA, tenant, permissões. */
 export const ssoClient = createClient(
   import.meta.env.VITE_SSO_URL ?? 'http://localhost:3001',
 )
 
-/** NF-e / DFe. */
 export const nfeClient = createClient(
   import.meta.env.VITE_NFE_URL ?? 'http://localhost:3002',
 )

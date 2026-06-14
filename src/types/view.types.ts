@@ -53,6 +53,12 @@ export interface Connection {
   child: string
   /** Mapa de campo_filho → campo_pai */
   keys: Record<string, string>
+  /**
+   * false → conexão soft (declarada dentro do objeto, ex: modal.connections).
+   * Usada apenas para invalidar queries após submit — não bloqueia filhos.
+   * Omitido/true → conexão bloqueante (declarada em view.connections raiz).
+   */
+  blocking?: boolean
   params?: {
     searchParams?: Record<string, unknown>
     action?: string
@@ -80,7 +86,7 @@ export interface Navbar {
 
 // ─── Object Definition ────────────────────────────────────────────────────────
 
-export type ObjectType = 'crud' | 'table' | 'filter' | 'panel' | 'calendar' | 'bulkEditTable' | 'wizard' | 'chart' | 'grid'
+export type ObjectType = 'crud' | 'table' | 'filter' | 'panel' | 'calendar' | 'bulkEditTable' | 'wizard' | 'chart' | 'grid' | 'tree' | 'questionarioBuilder' | 'questionarioResponder'
 export type ObjectMode = 'create' | 'edit' | 'detail' | ''
 export type ObjectVariant = 'modal' | 'page' | 'inline' | ''
 
@@ -157,6 +163,30 @@ export interface ObjectDefinition {
   totalise?: boolean
   statusColors?: Record<string, string>
   objectList?: string[]
+  // ── Tree object ──────────────────────────────────────────────────────────────
+  idField?: string          // campo PK (ex: "id_conta_gerencial")
+  codeField?: string        // campo do código hierárquico (ex: "cd_conta_gerencial")
+  nameField?: string        // campo do nome (ex: "nome_conta_gerencial")
+  parentIdField?: string    // campo FK para o pai (ex: "id_conta_gerencial_pai")
+  maskParam?: string        // nome do parâmetro de sistema com a máscara (ex: "MASCARA_PLANO_GERENCIAL")
+  defaultMask?: string      // máscara padrão caso o parâmetro não exista (ex: "9.99.999.9999")
+  // ── Questionario objects ─────────────────────────────────────────────────────
+  questionarioEntity?: string   // entidade do questionário (default: "questionario")
+  perguntaEntity?: string       // entidade de perguntas (default: "questionarioPergunta")
+  respostaItemEntity?: string   // entidade dos itens de resposta (default: "questionarioRespostaItem")
+  /** Nome do parâmetro de sistema com o ID (único) ou lista "1,2,3" do questionário */
+  idQuestionarioParam?: string
+  /** ID fixo de um único questionário — vai direto, sem picker */
+  idQuestionario?: number
+  /** IDs fixos de múltiplos questionários — abre picker restrito a esses IDs */
+  idQuestionarios?: number[] | string
+  entidadeRef?: string          // nome da entidade vinculada à resposta (ex: "residente")
+  idRefParam?: string           // initialParam ou screenParam com o ID da entidade vinculada
+  /** View/entidade a consultar para preenchimento automático de perguntas com nm_campo_auto.
+   *  Se não informado, usa "vw_" + entidadeRef (ex: entidadeRef="residente" → "vw_residente") */
+  entidadeRefView?: string
+  /** Nome do relatório Jasper para exportar a resposta como PDF (ex: "questionarioResposta") */
+  reportName?: string
   selectAllDefault?: boolean
   filterButtonName?: string
   filterButtonIcon?: string | false
@@ -194,11 +224,15 @@ export interface ObjectDefinition {
 
 export interface HookAction {
   type: 'script' | 'js'
-  name: string
+  /** Nome do script — aceita "name", "scriptId" ou "script" (compatibilidade com diferentes formatos do JSON) */
+  name?: string
+  scriptId?: string
+  script?: string
   /** Params estáticos enviados como customParams ao script (suporta {{campo}} resolvido contra screenParams + form) */
   params?: Record<string, string>
   /** Entidades adicionais a invalidar no TanStack Query após o hook executar com sucesso */
   affectedEntities?: string[]
+  reloadAfterAction?: boolean
 }
 
 export interface SubmitAction {
@@ -275,6 +309,7 @@ export type ComponentType =
   | 'file' | 'image' | 'richtext' | 'color' | 'mask' | 'range'
   | 'chart' | 'pivot' | 'kanban' | 'monaco' | 'cep' | 'cpfCnpj' | 'phoneNumber' | 'email' | 'link' | 'button'
   | 'html' | 'hidden' | 'generalActions' | 'currency' | 'chipselect' | 'groupcheckbox' | 'linkpanel'
+  | 'password' | 'fileupload'
   | 'actions'
 
 export interface ComponentDefinition {
@@ -354,6 +389,22 @@ export interface ComponentDefinition {
   loadOnFocus?: boolean
   autoSelectFirst?: boolean
   contextParams?: Record<string, unknown>
+  /**
+   * Comportamento especial ao selecionar um item.
+   * type: 'insertInto' → insere texto no campo `targetField` em vez de (ou além de) salvar a FK.
+   */
+  behavior?: {
+    type: 'insertInto'
+    /** nameForm do campo alvo que receberá o texto inserido */
+    targetField: string
+    /** Template do texto a inserir. Use ${fieldName} para substituir por campos do item selecionado.
+     *  Ex: "{{${name}}}" com item {name:"nm_campo"} → "{{nm_campo}}"  */
+    insertTemplate?: string
+    /** Onde inserir: 'cursor' (padrão) | 'start' | 'end' */
+    insertMode?: 'cursor' | 'start' | 'end'
+    /** Se true, limpa o autocomplete após inserir */
+    clearAfterInsert?: boolean
+  }
   /** Campo que contém o caminho hierárquico separado por ||| (ex: "path_string") */
   pathField?: string
   /** Campo que contém o nível de profundidade para indentação visual (ex: "nivel") */
@@ -381,10 +432,12 @@ export interface ComponentDefinition {
 
   // Template
   template?: string
-  templates?: Array<{ template: string }>
+  templates?: Array<{ template: string; visible?: string; placeHolder?: string }>
 
-  // File/Image
+  // File/Image / FileUpload
   fileName?: string
+  accept?: string       // ex: ".pdf,.docx" — tipos aceitos pelo file picker
+  download?: boolean    // true → exibe botão de download quando há arquivo salvo
   nomeArquivo?: string
   nomeProcesso?: string
   docType?: string

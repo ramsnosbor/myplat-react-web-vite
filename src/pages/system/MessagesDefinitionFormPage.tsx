@@ -93,8 +93,8 @@ export default function MessagesDefinitionFormPage() {
 
   return (
     <AppShell title={editing ? 'Editar Campanha' : 'Nova Campanha'} subtitle="Disparo automatizado baseado em template.">
-      <div className="min-h-full bg-background p-4 sm:p-6">
-        <div className="mx-auto max-w-6xl space-y-4">
+      <div className="min-h-full w-full bg-background p-3 sm:p-4">
+        <div className="w-full space-y-4">
           <section className="rounded-lg border border-blue-100 bg-white p-4 shadow-sm shadow-blue-950/5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-md bg-blue-700 text-white"><i className="bi bi-bell" aria-hidden /></div><div><h1 className="text-lg font-semibold text-slate-900">{editing ? 'Editar Campanha' : 'Nova Campanha'}</h1><p className="text-sm text-slate-500">Configure periodo, template e variaveis.</p></div></div>
