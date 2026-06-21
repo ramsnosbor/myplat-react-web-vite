@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
+import { usePopupNavigation } from '@/contexts/PopupNavigationContext'
 import { authApi } from '@/api/auth.api'
 import type { AclMap, ModuleDefinition, MenuItemDefinition } from '@/api/auth.api'
 import { getTenantModuleIds, filterModules, sortMenusByModuleOrder, isClienteToken, isFullAdminToken, resolveHomePath } from '@/pages/auth/authFlow'
@@ -118,6 +119,27 @@ export function navigateToParsedMenu(navigate: ReturnType<typeof useNavigate>, p
     return
   }
   navigate(`/home/${parsed.screen}${parsed.search ?? ''}`, parsed.params ? { state: { initialParams: parsed.params } } : undefined)
+}
+
+/** Hook que intercepta navegação de menu: abre popup quando popup mode está ativo */
+export function useMenuNavigate() {
+  const navigate = useNavigate()
+  const popupNav = usePopupNavigation()
+
+  return useCallback((parsed: ReturnType<typeof parseMenuUrl>) => {
+    if (parsed.external && parsed.href) {
+      window.open(parsed.href, '_blank', 'noopener,noreferrer')
+      return
+    }
+    if (!parsed.screen) return
+
+    if (popupNav?.isPopupModeActive) {
+      popupNav.openPopup(parsed.screen, parsed.params)
+      return
+    }
+
+    navigateToParsedMenu(navigate, parsed)
+  }, [navigate, popupNav])
 }
 
 export function AppSidebar() {
@@ -402,17 +424,11 @@ function MobileMenuGroup({ node, onNavigate }: { node: MenuTreeNode; onNavigate:
 }
 
 function MobileMenuLeaf({ item, onNavigate }: { item: MenuItemDefinition; onNavigate: () => void }) {
-  const navigate = useNavigate()
   const parsed = parseMenuUrl(item.url ?? '')
+  const menuNavigate = useMenuNavigate()
 
   function handleClick() {
-    if (parsed.external && parsed.href) {
-      window.open(parsed.href, '_blank', 'noopener,noreferrer')
-      onNavigate()
-      return
-    }
-    if (!parsed.screen) return
-    navigateToParsedMenu(navigate, parsed)
+    menuNavigate(parsed)
     onNavigate()
   }
 
@@ -681,9 +697,9 @@ function FlyoutMenuItem({
   depth?: number
   onNavigate: () => void
 }) {
-  const navigate = useNavigate()
   const { screen: activeScreen } = useParams<{ screen?: string }>()
   const parsed = parseMenuUrl(item.url ?? '')
+  const menuNavigate = useMenuNavigate()
 
   if (parsed.external) {
     return (
@@ -705,14 +721,7 @@ function FlyoutMenuItem({
   const isActive = (activeScreen ?? 'home') === parsed.screen
 
   function handleClick() {
-    const staticRoute = STATIC_SCREEN_ROUTES[parsed.screen ?? '']
-    if (staticRoute) {
-      navigate(`${staticRoute}${parsed.search ?? ''}`, parsed.params ? { state: { initialParams: parsed.params } } : undefined)
-      onNavigate()
-      return
-    }
-
-    navigate(`/home/${parsed.screen}${parsed.search ?? ''}`, parsed.params ? { state: { initialParams: parsed.params } } : undefined)
+    menuNavigate(parsed)
     onNavigate()
   }
 

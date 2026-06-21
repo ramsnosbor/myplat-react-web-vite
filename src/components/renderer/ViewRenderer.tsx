@@ -11,6 +11,7 @@ import { resolveColClass } from '@/utils/colClass'
 import { ViewContext, useViewContext } from './ViewContext'
 import { evalExpr } from '@/utils/evalExpr'
 import type { ViewDefinition, Navbar, ObjectDefinition } from '@/types/view.types'
+import { useRegisterPopupMode } from '@/contexts/PopupNavigationContext'
 
 // ─── Cache de parâmetros SSO ──────────────────────────────────────────────────
 // Evita múltiplas chamadas para o mesmo parâmetro quando há várias views
@@ -52,6 +53,9 @@ export function ViewRenderer({ screenName, initialParams }: ViewRendererProps) {
     queryFn: () => viewsApi.getView(screenName),
     staleTime: 5 * 60 * 1000, // 5 minutos de cache para a definição da view
   })
+
+  // Registra no PopupNavigationContext quando a view tem newFormShowPopup:true
+  useRegisterPopupMode(definition?.newFormShowPopup === true)
 
   // ─── Parâmetros SSO ────────────────────────────────────────────────────────
   // Busca os parâmetros declarados em definition.parameters[] via GET /parameters?cdParameter=name

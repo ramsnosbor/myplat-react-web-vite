@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { AppMobileBottomNav, AppSidebar, DEFAULT_MENU_ITEM_ICON, navigateToParsedMenu, parseMenuUrl } from './AppSidebar'
+import { AppMobileBottomNav, AppSidebar, DEFAULT_MENU_ITEM_ICON, navigateToParsedMenu, parseMenuUrl, useMenuNavigate } from './AppSidebar'
 import type { MenuItemDefinition, ModuleDefinition } from '@/api/auth.api'
 import { notificationApi, type NotificationItem } from '@/api/notification.api'
 import { useAuthStore } from '@/store/authStore'
@@ -15,6 +15,7 @@ interface AppShellProps {
 
 export function AppShell({ title, subtitle, children }: AppShellProps) {
   const navigate = useNavigate()
+  const menuNavigate = useMenuNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
@@ -131,11 +132,7 @@ export function AppShell({ title, subtitle, children }: AppShellProps) {
             onChange={setMenuSearchTerm}
             onOpenChange={setMenuSearchOpen}
             onNavigate={(item) => {
-              if (item.parsed.external && item.parsed.href) {
-                window.open(item.parsed.href, '_blank', 'noopener,noreferrer')
-              } else {
-                navigateToParsedMenu(navigate, item.parsed)
-              }
+              menuNavigate(item.parsed)
               setMenuSearchTerm('')
               setMenuSearchOpen(false)
               setSettingsOpen(false)

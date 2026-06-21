@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef } from 'react'
+import { createContext, useContext, useState, useCallback, useRef, useEffect, useId } from 'react'
 import { createPortal } from 'react-dom'
 import { ViewRenderer } from '@/components/renderer/ViewRenderer'
 
@@ -10,7 +10,14 @@ interface PopupState {
 }
 
 interface PopupNavigationContextValue {
+  /** Abre uma tela como popup overlay */
   openPopup(screen: string, initialParams?: Record<string, unknown>): void
+  /** True quando alguma view com newFormShowPopup:true está montada em primeiro plano */
+  isPopupModeActive: boolean
+  /** Chamado por ViewRenderer quando carrega uma view com newFormShowPopup:true */
+  registerPopupMode(id: string): void
+  /** Chamado por ViewRenderer ao desmontar ou quando o flag deixa de ser true */
+  unregisterPopupMode(id: string): void
 }
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -25,6 +32,7 @@ export function usePopupNavigation(): PopupNavigationContextValue | null {
 
 export function PopupNavigationProvider({ children }: { children: React.ReactNode }) {
   const [stack, setStack] = useState<PopupState[]>([])
+  const [activeIds, setActiveIds] = useState<Set<string>>(new Set())
 
   const openPopup = useCallback((screen: string, initialParams?: Record<string, unknown>) => {
     setStack((prev) => [...prev, { screen, initialParams }])
@@ -34,8 +42,22 @@ export function PopupNavigationProvider({ children }: { children: React.ReactNod
     setStack((prev) => prev.slice(0, -1))
   }, [])
 
+  const registerPopupMode = useCallback((id: string) => {
+    setActiveIds((prev) => new Set(prev).add(id))
+  }, [])
+
+  const unregisterPopupMode = useCallback((id: string) => {
+    setActiveIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }, [])
+
+  const isPopupModeActive = activeIds.size > 0
+
   return (
-    <PopupNavigationContext.Provider value={{ openPopup }}>
+    <PopupNavigationContext.Provider value={{ openPopup, isPopupModeActive, registerPopupMode, unregisterPopupMode }}>
       {children}
       {stack.map((popup, i) => (
         <PopupModal
@@ -47,6 +69,19 @@ export function PopupNavigationProvider({ children }: { children: React.ReactNod
       ))}
     </PopupNavigationContext.Provider>
   )
+}
+
+// ─── Hook para ViewRenderer registrar popup mode ──────────────────────────────
+
+export function useRegisterPopupMode(active: boolean) {
+  const ctx = usePopupNavigation()
+  const id = useId()
+
+  useEffect(() => {
+    if (!ctx || !active) return
+    ctx.registerPopupMode(id)
+    return () => ctx.unregisterPopupMode(id)
+  }, [ctx, active, id])
 }
 
 // ─── PopupModal ───────────────────────────────────────────────────────────────
