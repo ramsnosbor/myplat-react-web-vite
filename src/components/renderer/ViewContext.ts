@@ -7,7 +7,7 @@ import type { ViewDefinition, Connection } from '@/types/view.types'
 export interface ViewContextValue {
   viewStore: ViewStore
   connections: Connection[]
-  definition: ViewDefinition
+  definition: ViewDefinition & { newFormShowPopup?: boolean }
   /** Params vindos do URL do menu — injetados como queryParams iniciais nos filters */
   initialParams?: Record<string, unknown>
   /**

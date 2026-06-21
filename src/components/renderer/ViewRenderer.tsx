@@ -117,6 +117,7 @@ export function ViewRenderer({ screenName, initialParams }: ViewRendererProps) {
           connections: definition.connections ?? [],
           navbars: definition.navbars ?? [],
           objects: definition.objects ?? [],
+          newFormShowPopup: definition.newFormShowPopup,
         },
       }}
     >

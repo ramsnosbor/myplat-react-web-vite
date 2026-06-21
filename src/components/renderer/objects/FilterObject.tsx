@@ -131,7 +131,7 @@ export function FilterObject({ objectDef }: Props) {
     if (objectDef.createUrl) {
       const values = { ...ctx, ...form.getValues() } as Record<string, unknown>
       const resolvedUrl = interpolate(objectDef.createUrl, values)
-      if (objectDef.newFormShowPopup && popupNav) {
+      if (definition.newFormShowPopup && popupNav) {
         popupNav.openPopup(resolvedUrl)
       } else {
         navigate(`/home/${resolvedUrl}`)

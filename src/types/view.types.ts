@@ -7,6 +7,8 @@ export interface ViewDefinition {
   objects: ObjectDefinition[]
   /** Parâmetros SSO declarados na view — buscados via GET /parameters?cdParameter=name */
   parameters?: ParameterDef[]
+  /** Quando true, navegações para novas telas a partir desta view abrem como popup */
+  newFormShowPopup?: boolean
 }
 
 export interface ParameterDef {

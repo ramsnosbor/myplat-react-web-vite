@@ -17,6 +17,7 @@ import type { ObjectDefinition, CrudAction } from '@/types/view.types'
 import type { EntityRecord } from '@/types/entity.types'
 import type { ObjectState } from '@/store/viewStore'
 import { storePendingUpload } from '@/utils/pendingUpload'
+import { usePopupNavigation } from '@/contexts/PopupNavigationContext'
 
 interface Props {
   objectDef: ObjectDefinition
@@ -32,6 +33,7 @@ function resolveActionRoute(path: string) {
 
 export function CrudObject({ objectDef }: Props) {
   const navigate = useNavigate()
+  const popupNav = usePopupNavigation()
   const { viewStore, initialParams = {}, connections, definition, screenParams } = useViewContext()
   const objectState = useStore(viewStore, (s) => s.objects[objectDef.id])
   const setObjectState = useStore(viewStore, (s) => s.setObjectState)
@@ -909,7 +911,11 @@ export function CrudObject({ objectDef }: Props) {
                 ]),
               )
             : undefined
-          navigate(`/home/${screen}`, params ? { state: { searchParams: params } } : undefined)
+          if (definition.newFormShowPopup && popupNav) {
+            popupNav.openPopup(screen, params)
+          } else {
+            navigate(`/home/${screen}`, params ? { state: { searchParams: params } } : undefined)
+          }
           break
         }
         case 'showObject': {
