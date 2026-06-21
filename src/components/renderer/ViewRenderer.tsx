@@ -311,7 +311,7 @@ function ObjectSlot({ objectDef }: { objectDef: ObjectDefinition }) {
   }
 
   return (
-    <div className={resolveColClass(objectDef.class)}>
+    <div className={`${resolveColClass(objectDef.class)} min-w-0 w-full`}>
       <ObjectRenderer objectDef={objectDef} />
     </div>
   )

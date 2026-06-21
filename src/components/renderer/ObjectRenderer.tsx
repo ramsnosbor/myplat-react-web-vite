@@ -1,4 +1,4 @@
-import { useMemo, lazy, Suspense } from 'react'
+import { useMemo, lazy, Suspense, type ReactNode } from 'react'
 import { useStore } from 'zustand'
 import { useViewContext } from './ViewContext'
 import type { ObjectDefinition, Connection } from '@/types/view.types'
@@ -169,8 +169,14 @@ interface ObjectRendererProps {
   objectDef: ObjectDefinition
 }
 
+const CHILD_LAYOUT_CLASS: Record<string, string> = {
+  horizontal: 'flex flex-row flex-wrap gap-3',
+  vertical:   'flex flex-col gap-3',
+  grid:       'grid grid-cols-12 gap-4',
+}
+
 export function ObjectRenderer({ objectDef }: ObjectRendererProps) {
-  const { viewStore } = useViewContext()
+  const { viewStore, definition } = useViewContext()
 
   // Lê o mode do viewStore para controlar visibilidade de objetos dinâmicos.
   // O hook deve ser chamado antes de qualquer early return (regra dos hooks).
@@ -183,41 +189,81 @@ export function ObjectRenderer({ objectDef }: ObjectRendererProps) {
   // Esta guarda cobre o caso de ObjectRenderer ser chamado diretamente (ex: dentro de ModalWrapper).
   if (objectDef.dynamic && !objectMode) return null
 
+  let content: ReactNode
+
   switch (objectDef.type) {
     case 'table':
-      return <TableObject objectDef={objectDef} />
+      content = <TableObject objectDef={objectDef} />
+      break
     case 'filter':
-      return <FilterObject objectDef={objectDef} />
+      content = <FilterObject objectDef={objectDef} />
+      break
     case 'crud':
-      return <CrudObject objectDef={objectDef} />
+      content = <CrudObject objectDef={objectDef} />
+      break
     case 'panel':
-      return <PanelObject objectDef={objectDef} />
+      content = <PanelObject objectDef={objectDef} />
+      break
     case 'chart':
-      return (
+      content = (
         <Suspense fallback={<div className="flex items-center justify-center py-8"><div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>}>
           <ChartObject objectDef={objectDef} />
         </Suspense>
       )
+      break
     case 'grid':
-      return <GridObject objectDef={objectDef} />
+      content = <GridObject objectDef={objectDef} />
+      break
     case 'bulkEditTable':
-      return <BulkEditTableObject objectDef={objectDef} />
+      content = <BulkEditTableObject objectDef={objectDef} />
+      break
     case 'iframe':
-      return <IframeObject objectDef={objectDef} />
+      content = <IframeObject objectDef={objectDef} />
+      break
     case 'tree':
-      return <TreeObject objectDef={objectDef} />
+      content = <TreeObject objectDef={objectDef} />
+      break
     case 'questionarioBuilder':
-      return <QuestionarioBuilderObject objectDef={objectDef} />
+      content = <QuestionarioBuilderObject objectDef={objectDef} />
+      break
     case 'questionarioResponder':
-      return <QuestionarioResponderObject objectDef={objectDef} />
+      content = <QuestionarioResponderObject objectDef={objectDef} />
+      break
     case 'questionarioModelo':
-      return <QuestionarioModeloObject objectDef={objectDef} />
+      content = <QuestionarioModeloObject objectDef={objectDef} />
+      break
     default:
-      return (
+      content = (
         <div className="rounded-md border border-border p-4 text-sm text-muted-foreground">
           Object type <code className="font-mono">{objectDef.type}</code> ainda não implementado.
         </div>
       )
   }
+
+  // Renderiza objetos filhos embutidos (childs) logo abaixo do conteúdo principal
+  if (objectDef.childs && objectDef.childs.length > 0) {
+    const layoutClass = CHILD_LAYOUT_CLASS[objectDef.childLayout ?? 'vertical'] ?? 'flex flex-col gap-3'
+    const childObjects = objectDef.childs
+      .map((childId) => definition.objects.find((o) => o.id === childId))
+      .filter((o): o is ObjectDefinition => o !== undefined)
+
+    return (
+      <>
+        {content}
+        <div className={`mt-3 ${layoutClass}`}>
+          {childObjects.map((child) => {
+            // Objetos modal são forçados a renderizar inline (sem overlay)
+            const inlineDef: ObjectDefinition =
+              child.variant === 'modal'
+                ? { ...child, variant: undefined, dynamic: false }
+                : child
+            return <ObjectRenderer key={child.id} objectDef={inlineDef} />
+          })}
+        </div>
+      </>
+    )
+  }
+
+  return content
 }
 

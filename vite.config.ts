@@ -11,25 +11,6 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       tailwindcss(),
-      // Redireciona imports individuais es-toolkit/compat/X para o bundle ESM principal,
-      // evitando o bug "var t=t()" gerado pelo CJS interop do Rolldown em produção.
-      {
-        name: 'es-toolkit-compat-esm',
-        resolveId(id) {
-          const match = id.match(/^es-toolkit\/compat\/(.+)$/)
-          if (match) {
-            return `\0es-toolkit-shim:${match[1]}`
-          }
-        },
-        load(id) {
-          const match = id.match(/^\0es-toolkit-shim:(.+)$/)
-          if (match) {
-            // Usa o índice ESM do compat — tree-shaking garante que só a função
-            // necessária seja incluída no bundle final.
-            return `export { ${match[1]} as default } from 'es-toolkit/compat'`
-          }
-        },
-      },
     ],
 
     resolve: {
@@ -55,6 +36,7 @@ export default defineConfig(({ mode }) => {
       include: [
         'recharts',
         'es-toolkit',
+        'es-toolkit/compat',
         'react-pivottable',
         'react-pivottable/PivotTableUI',
         'react-pivottable/TableRenderers',

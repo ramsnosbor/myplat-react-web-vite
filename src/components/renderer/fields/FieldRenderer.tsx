@@ -20,6 +20,7 @@ import { CepField } from './CepField'
 import { QuestionarioInlineComponent } from './QuestionarioInlineComponent'
 import { apiClient } from '@/api/client'
 import { evalExpr } from '@/utils/evalExpr'
+import { interpolate } from '@/utils/interpolate'
 import { useViewContext } from '../ViewContext'
 import { resolveColClass } from '@/utils/colClass'
 
@@ -275,14 +276,23 @@ export function FieldRenderer({ component: comp, register, control, setValue, wa
       )
 
     case 'label':
-    case 'title':
+    case 'title': {
+      const resolvedValue = interpolate(comp.nameForm, formValues)
       return (
-        <div className={colClass}>
-          <div style={comp.labelStyle as React.CSSProperties}>
-            <span className="text-sm font-semibold">{label}</span>
-          </div>
+        <div className={colClass} style={comp.style as React.CSSProperties}>
+          {label && (
+            <div style={comp.labelStyle as React.CSSProperties}>
+              <span className="text-xs font-semibold">{label}</span>
+            </div>
+          )}
+          {resolvedValue !== '' && (
+            <div style={comp.valueStyle as React.CSSProperties}>
+              <span className="text-sm">{resolvedValue}</span>
+            </div>
+          )}
         </div>
       )
+    }
 
     case 'template':
       return (

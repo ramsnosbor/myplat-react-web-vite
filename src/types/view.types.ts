@@ -219,6 +219,9 @@ export interface ObjectDefinition {
   gap?: number
   columns?: { xs?: number; sm?: number; md?: number; lg?: number }
   itemStyle?: Record<string, string>
+  // Childs: renderiza objetos filhos embutidos abaixo deste objeto
+  childs?: string[]
+  childLayout?: 'vertical' | 'horizontal' | 'grid'
   components: ComponentDefinition[]
 }
 
@@ -261,6 +264,8 @@ export interface CrudAction {
   reloadAfterAction?: boolean
   /** Entidades adicionais a invalidar após sucesso (complementa result.affectedEntities do script) */
   affectedEntities?: string[]
+  /** Entidades cujo cache deve ser removido antes de navegar (garante fetch limpo na tela de destino) */
+  reloadEntities?: string[]
   params?: Record<string, string>
   confirmation?: string
   // action: "executeScript"
@@ -273,6 +278,15 @@ export interface CrudAction {
   // action: "showObject" / "closeObject"
   object?: string
   objectAction?: string
+  // monitor: polling de status após execução bem-sucedida
+  monitor?: {
+    entity: string
+    idField: string
+    statusField: string
+    successStatus: number[]
+    errorStatus: number[]
+    label: string
+  }
 }
 
 export interface PopoverField {
@@ -489,9 +503,13 @@ export interface ComponentAction {
   confirmation?: string
   type?: string         // para export: "PDF" | "CSV"
   url?: string          // para navigate: rota destino
+  /** Tipos aceitos pelo seletor de arquivo em action="uploadNavigate". */
+  accept?: string
   entities?: string[]   // entidades relacionadas (export/navigate)
   /** Entidades a invalidar após executeScript com sucesso (complementa result.affectedEntities do script) */
   affectedEntities?: string[]
+  /** Entidades cujo cache deve ser removido antes de navegar (garante fetch limpo na tela de destino) */
+  reloadEntities?: string[]
   /** Recarrega a entidade atual do objeto após executeScript com sucesso */
   reloadAfterAction?: boolean
   /** Params estáticos enviados como customParams ao script (suporta {{campo}} resolvido contra screenParams + initialParams) */

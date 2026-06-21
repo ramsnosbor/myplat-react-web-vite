@@ -1,5 +1,6 @@
 import axios, { type AxiosInstance } from 'axios'
 import Cookies from 'js-cookie'
+import { parseJwt, type JwtPayload } from '@/lib/jwt'
 
 // ─── Nomes de cookie — padrão compartilhado com o Maker ──────────────────────
 // Devem ser idênticos ao COOKIE_NAMES do cookieManager.js do Maker.
@@ -105,7 +106,15 @@ function createClient(baseURL: string): AxiosInstance {
 
   instance.interceptors.request.use((config) => {
     const token = getClientToken()
-    if (token) config.headers.Authorization = `Bearer ${token}`
+    if (token) {
+      const payload = parseJwt<JwtPayload>(token)
+      const expMs = payload.exp ? payload.exp * 1000 : null
+      if (expMs && Date.now() >= expMs) {
+        redirectToLogin()
+        return Promise.reject(new Error('TOKEN_EXPIRED'))
+      }
+      config.headers.Authorization = `Bearer ${token}`
+    }
     return config
   })
 

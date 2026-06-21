@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { AppMobileBottomNav, AppSidebar } from './AppSidebar'
+import { AppMobileBottomNav, AppSidebar, DEFAULT_MENU_ITEM_ICON, navigateToParsedMenu, parseMenuUrl } from './AppSidebar'
+import type { MenuItemDefinition, ModuleDefinition } from '@/api/auth.api'
 import { notificationApi, type NotificationItem } from '@/api/notification.api'
 import { useAuthStore } from '@/store/authStore'
 import { isClienteToken } from '@/pages/auth/authFlow'
@@ -18,13 +19,17 @@ export function AppShell({ title, subtitle, children }: AppShellProps) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [menuSearchTerm, setMenuSearchTerm] = useState('')
+  const [menuSearchOpen, setMenuSearchOpen] = useState(false)
   const user = useAuthStore((s) => s.user)
   const tenant = useAuthStore((s) => s.tenant)
   const token = useAuthStore((s) => s.token)
   const homePath = useAuthStore((s) => s.homePath)
+  const modules = useAuthStore((s) => s.modules)
   const logout = useAuthStore((s) => s.logout)
   const queryClient = useQueryClient()
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const menuSearchRef = useRef<HTMLDivElement | null>(null)
   const tenantName = tenant?.label ?? tenant?.code ?? user?.tenant?.name ?? user?.tenant?.code ?? 'Tenant'
   const isClienteAccess = isClienteToken(token ?? '') ||
     String(user?.type ?? '').toUpperCase() === 'CLIENTE' ||
@@ -68,6 +73,9 @@ export function AppShell({ title, subtitle, children }: AppShellProps) {
         setUserMenuOpen(false)
         setNotificationsOpen(false)
       }
+      if (!menuSearchRef.current?.contains(event.target as Node)) {
+        setMenuSearchOpen(false)
+      }
     }
 
     document.addEventListener('mousedown', handlePointerDown)
@@ -78,6 +86,7 @@ export function AppShell({ title, subtitle, children }: AppShellProps) {
     setSettingsOpen(false)
     setUserMenuOpen(false)
     setNotificationsOpen(false)
+    setMenuSearchOpen(false)
     navigate(path)
   }
 
@@ -113,6 +122,27 @@ export function AppShell({ title, subtitle, children }: AppShellProps) {
               <p className="truncate text-xs text-slate-500">{subtitle ?? tenant?.label ?? ''}</p>
             </div>
           </div>
+
+          <MenuSearch
+            refEl={menuSearchRef}
+            modules={modules}
+            value={menuSearchTerm}
+            open={menuSearchOpen}
+            onChange={setMenuSearchTerm}
+            onOpenChange={setMenuSearchOpen}
+            onNavigate={(item) => {
+              if (item.parsed.external && item.parsed.href) {
+                window.open(item.parsed.href, '_blank', 'noopener,noreferrer')
+              } else {
+                navigateToParsedMenu(navigate, item.parsed)
+              }
+              setMenuSearchTerm('')
+              setMenuSearchOpen(false)
+              setSettingsOpen(false)
+              setUserMenuOpen(false)
+              setNotificationsOpen(false)
+            }}
+          />
 
           <div ref={menuRef} className="relative flex min-w-0 items-center gap-2">
             <button
@@ -233,6 +263,116 @@ export function AppShell({ title, subtitle, children }: AppShellProps) {
       )}
 
       <AppMobileBottomNav />
+    </div>
+  )
+}
+
+type ParsedMenuUrl = ReturnType<typeof parseMenuUrl>
+
+interface MenuSearchResult {
+  id: string
+  label: string
+  moduleName: string
+  parent?: string
+  icon?: string
+  parsed: ParsedMenuUrl
+}
+
+function MenuSearch({
+  refEl,
+  modules,
+  value,
+  open,
+  onChange,
+  onOpenChange,
+  onNavigate,
+}: {
+  refEl: RefObject<HTMLDivElement | null>
+  modules: ModuleDefinition[]
+  value: string
+  open: boolean
+  onChange: (value: string) => void
+  onOpenChange: (open: boolean) => void
+  onNavigate: (item: MenuSearchResult) => void
+}) {
+  const normalizedValue = normalizeSearch(value)
+  const results = useMemo(() => {
+    if (normalizedValue.length < 2) return []
+
+    return modules
+      .flatMap((mod) => (mod.menus ?? [])
+        .filter(isSearchableMenu)
+        .flatMap((menu) => {
+          const haystack = normalizeSearch(`${menu.label} ${menu.parentmenu ?? ''} ${mod.name} ${mod.shortName ?? ''} ${menu.url ?? ''}`)
+          if (!haystack.includes(normalizedValue)) return []
+          return [{
+            id: `${mod.idModulo}-${menu.idMenu}`,
+            label: menu.label,
+            moduleName: mod.shortName ?? mod.name,
+            parent: menu.parentmenu,
+            icon: menu.icon ?? mod.icon,
+            parsed: parseMenuUrl(menu.url ?? ''),
+          }]
+        }))
+      .slice(0, 8)
+  }, [modules, normalizedValue])
+
+  const showPanel = open && value.trim().length > 0
+
+  return (
+    <div ref={refEl} className="relative hidden min-w-[180px] max-w-xl flex-1 md:block">
+      <div className="relative">
+        <i className="bi bi-search pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400" aria-hidden />
+        <input
+          type="search"
+          value={value}
+          onChange={(event) => {
+            onChange(event.target.value)
+            onOpenChange(true)
+          }}
+          onFocus={() => onOpenChange(true)}
+          placeholder="Buscar menu..."
+          className="h-9 w-full rounded-md border border-blue-100 bg-blue-50/50 pl-9 pr-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 hover:border-blue-200 focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
+        />
+      </div>
+
+      {showPanel && (
+        <div className="absolute left-0 right-0 top-11 z-50 overflow-hidden rounded-md border border-blue-100 bg-white shadow-xl shadow-blue-950/15">
+          {value.trim().length < 2 ? (
+            <div className="px-4 py-3 text-sm text-slate-500">Digite pelo menos 2 caracteres.</div>
+          ) : results.length > 0 ? (
+            <div className="max-h-80 overflow-y-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {results.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onNavigate(item)}
+                  className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-blue-50"
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-blue-100 text-blue-700">
+                    <i className={item.icon ?? DEFAULT_MENU_ITEM_ICON} aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-slate-800">{item.label}</span>
+                    <span className="mt-0.5 block truncate text-xs text-slate-500">
+                      {item.parent ? `${item.moduleName} / ${item.parent}` : item.moduleName}
+                    </span>
+                  </span>
+                  <i className="bi bi-arrow-right-short shrink-0 text-lg text-blue-400" aria-hidden />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="px-4 py-5 text-center">
+              <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 text-blue-700 ring-1 ring-blue-100">
+                <i className="bi bi-search" aria-hidden />
+              </div>
+              <p className="mt-2 text-sm font-semibold text-slate-800">Nenhum menu encontrado</p>
+              <p className="mt-1 text-xs text-slate-500">A busca considera apenas menus liberados para o seu acesso.</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -393,4 +533,17 @@ function MenuItem({ icon, label, onClick }: { icon: string; label: string; onCli
       <span className="truncate">{label}</span>
     </button>
   )
+}
+
+function isSearchableMenu(menu: MenuItemDefinition) {
+  if (!menu.url) return false
+  return ['son', 'item', 'I'].includes(menu.type)
+}
+
+function normalizeSearch(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
 }

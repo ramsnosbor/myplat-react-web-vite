@@ -321,6 +321,7 @@ export function BulkEditTableObject({ objectDef }: Props) {
         if (result.message) toast.success(result.message)
         if (result.reload) queryClient.invalidateQueries({ queryKey: ['entity', objectDef.entity] })
         for (const e of result.affectedEntities ?? []) queryClient.invalidateQueries({ queryKey: ['entity', e] })
+        for (const e of action.affectedEntities ?? []) queryClient.invalidateQueries({ queryKey: ['entity', e] })
         break
       }
       case 'reload':
@@ -434,6 +435,7 @@ export function BulkEditTableObject({ objectDef }: Props) {
               else if (r.message) toast.success(r.message)
               if (r.reload) queryClient.invalidateQueries({ queryKey: ['entity', objectDef.entity] })
               for (const e of r.affectedEntities ?? []) queryClient.invalidateQueries({ queryKey: ['entity', e] })
+              for (const e of action.affectedEntities ?? []) queryClient.invalidateQueries({ queryKey: ['entity', e] })
             })
             .catch(() => toast.error('Erro ao executar ação.'))
           break

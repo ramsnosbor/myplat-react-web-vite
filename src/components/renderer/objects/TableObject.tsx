@@ -15,6 +15,7 @@ import { useConfirm } from '@/components/ui/ConfirmDialog'
 import type { ObjectDefinition, ComponentDefinition, ComponentAction } from '@/types/view.types'
 import { interpolate } from '@/utils/interpolate'
 import { evalExpr } from '@/utils/evalExpr'
+import { storePendingUpload } from '@/utils/pendingUpload'
 import type { EntityListResponse, EntityRecord } from '@/types/entity.types'
 
 interface Props {
@@ -42,6 +43,10 @@ const TABLE_HEIGHT_OPTIONS: Array<{
   { value: 'expanded', label: 'Expandido', description: 'Ocupa mais area', maxHeight: '70vh' },
 ]
 
+function resolveActionRoute(path: string) {
+  return path.startsWith('/') ? path : `/home/${path}`
+}
+
 export function TableObject({ objectDef }: Props) {
   const { viewStore, connections, definition, initialParams, screenParams } = useViewContext()
   const objectState = useStore(viewStore, (s) => s.objects[objectDef.id])
@@ -51,6 +56,8 @@ export function TableObject({ objectDef }: Props) {
   const toast = useToast()
   const { confirm, confirmDialog } = useConfirm()
   const tenantCode = useAuthStore((s) => s.tenant?.code ?? '')
+  const uploadInputRef = useRef<HTMLInputElement | null>(null)
+  const [uploadAction, setUploadAction] = useState<ComponentAction | null>(null)
 
   // Mapa id→entity: nos objetos/componentes "entity" guarda o entities[].id,
   // mas a API recebe o entities[].entity (que pode diferir do id).
@@ -293,6 +300,10 @@ export function TableObject({ objectDef }: Props) {
         }
         case 'navigate': {
           // Navega para outra tela com searchParams da linha
+          for (const entity of action.reloadEntities ?? []) {
+            queryClient.removeQueries({ queryKey: ['entity', entity] })
+            queryClient.removeQueries({ queryKey: ['entity-single', entity] })
+          }
           const params: Record<string, unknown> = {}
           for (const p of action.params ?? []) {
             params[p.key] = row[p.sourceKey ?? p.key]
@@ -432,7 +443,7 @@ export function TableObject({ objectDef }: Props) {
           if (target) {
             setObjectState(target, { mode: 'create', selectedRow: null, formData: null })
           } else if (action.url) {
-            navigate(`/home/${action.url}`)
+            navigate(resolveActionRoute(action.url))
           } else {
             const childConnections = connections.filter((c) => c.parent === objectDef.id)
             for (const conn of childConnections) {
@@ -444,6 +455,10 @@ export function TableObject({ objectDef }: Props) {
         case 'navigate': {
           const screen = action.object ?? action.url ?? ''
           if (!screen) break
+          for (const entity of action.reloadEntities ?? []) {
+            queryClient.removeQueries({ queryKey: ['entity', entity] })
+            queryClient.removeQueries({ queryKey: ['entity-single', entity] })
+          }
           // Resolve searchParams com interpolação {{campo}} usando initialParams + screenParams
           const ctx = { ...screenParams, ...initialParams } as Record<string, unknown>
           const navParams: Record<string, unknown> = {}
@@ -453,9 +468,19 @@ export function TableObject({ objectDef }: Props) {
               : val
           }
           navigate(
-            `/home/${screen}`,
+            resolveActionRoute(screen),
             Object.keys(navParams).length > 0 ? { state: { searchParams: navParams } } : undefined,
           )
+          break
+        }
+        case 'uploadNavigate':
+        case 'openUpload': {
+          if (!action.url) {
+            toast.error('Informe a rota de destino para a acao de upload.')
+            break
+          }
+          setUploadAction(action)
+          requestAnimationFrame(() => uploadInputRef.current?.click())
           break
         }
         case 'executeScript': {
@@ -502,12 +527,36 @@ export function TableObject({ objectDef }: Props) {
           console.warn('[TableObject] generalAction não suportada:', action.action)
       }
     },
-    [objectDef, connections, setObjectState, navigate, queryParams, queryClient],
+    [objectDef, connections, setObjectState, navigate, queryParams, queryClient, toast],
   )
+
+  function handleUploadNavigate(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    const action = uploadAction
+    event.target.value = ''
+    setUploadAction(null)
+    if (!file || !action?.url) return
+
+    const uploadToken = storePendingUpload(file)
+    navigate(resolveActionRoute(action.url), {
+      state: {
+        uploadToken,
+        uploadFileName: file.name,
+        uploadAction: action.title ?? action.name ?? 'Importar arquivo',
+      },
+    })
+  }
 
   return (
     <div style={objectDef.style as React.CSSProperties}>
       {confirmDialog}
+      <input
+        ref={uploadInputRef}
+        type="file"
+        className="hidden"
+        accept={uploadAction?.accept ?? '.xml,application/xml,text/xml'}
+        onChange={handleUploadNavigate}
+      />
       {/* Header: título + generalActions */}
       {false && (objectDef.title || generalActions.length > 0) && (
         <div className="mb-2 flex items-center justify-between gap-2">

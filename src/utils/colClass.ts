@@ -8,7 +8,7 @@
  *   resolveColClass('col-md-6')          → 'col-span-12 md:col-span-6'
  *   resolveColClass('col-md-4 col-lg-3') → 'col-span-12 md:col-span-4 lg:col-span-3'
  *   resolveColClass('col-6')             → 'col-span-6'
- *   resolveColClass('col-sm-12 col-md-6')→ 'sm:col-span-12 md:col-span-6'
+ *   resolveColClass('col-sm-12 col-md-6')→ 'col-span-12 sm:col-span-12 md:col-span-6'
  *   resolveColClass('my-custom-class')   → 'my-custom-class'  (passa direto)
  *   resolveColClass(undefined)           → 'col-span-12'      (fallback)
  */
@@ -54,10 +54,10 @@ const XL: Record<number, string> = {
 const BREAKPOINTS: Array<{
   pattern: RegExp
   lookup: Record<number, string>
-  isMobile: boolean  // base + sm → base mobile; md/lg/xl → não são mobile-first
+  isMobile: boolean  // apenas col-N cria base; col-sm/md/lg/xl precisam de fallback mobile
 }> = [
   { pattern: /\bcol-(\d{1,2})\b/,    lookup: BASE, isMobile: true  },
-  { pattern: /\bcol-sm-(\d{1,2})\b/, lookup: SM,   isMobile: true  },
+  { pattern: /\bcol-sm-(\d{1,2})\b/, lookup: SM,   isMobile: false },
   { pattern: /\bcol-md-(\d{1,2})\b/, lookup: MD,   isMobile: false },
   { pattern: /\bcol-lg-(\d{1,2})\b/, lookup: LG,   isMobile: false },
   { pattern: /\bcol-xl-(\d{1,2})\b/, lookup: XL,   isMobile: false },

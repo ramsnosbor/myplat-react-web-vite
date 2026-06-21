@@ -1,4 +1,4 @@
-import { apiClient, ssoClient } from './client'
+import { apiClient, ssoClient, nfeClient } from './client'
 
 export interface PageResponse<T> {
   table?: T[]
@@ -32,6 +32,7 @@ export interface NfeRecord {
   data_emissao?: string
   nome_pessoa_cli_for?: string
   chave_acesso?: string
+  nm_arquivo_xml?: string
   valor_total_nfe?: number
   ds_tipo_nfe?: string
   ds_nfe_status?: string
@@ -102,6 +103,58 @@ export const dfeApi = {
 
   getXml(id: number | string): Promise<string> {
     return ssoClient.get(`/nfe-dfe/${id}/xml`, { responseType: 'text' }).then((r) => r.data)
+  },
+
+  // ── NF-e emitida (API NFe) ──────────────────────────────────────────────────
+
+  getNfeXml(nmArquivoXml: string, dataEmissao: string, tenantId: string): Promise<string> {
+    const month = toMonthParam(dataEmissao)
+    return nfeClient.get(`/danfe/download/${encodeURIComponent(nmArquivoXml)}`, {
+      params: { month },
+      headers: { 'X-Tenant-Id': tenantId },
+      responseType: 'text',
+    }).then((r) => r.data as string)
+  },
+
+  async downloadNfePdf(chave: string, nmArquivoXml: string, dataEmissao: string, tenantId: string): Promise<Blob> {
+    const month = toMonthParam(dataEmissao)
+    // Passo 1: baixa o XML
+    const xmlText = await nfeClient.get<string>(
+      `/danfe/download/${encodeURIComponent(nmArquivoXml)}`,
+      { params: { month }, headers: { 'X-Tenant-Id': tenantId }, responseType: 'text' },
+    ).then((r) => r.data)
+    // Passo 2: gera PDF a partir do XML
+    return nfeClient.post<Blob>(
+      `/danfe/generate-from-xml`,
+      xmlText,
+      {
+        params: { fileName: chave },
+        headers: { 'X-Tenant-Id': tenantId, 'Content-Type': 'text/xml' },
+        responseType: 'blob',
+      },
+    ).then((r) => r.data)
+  },
+
+  // ── NFS-e emitida (API NFe) ─────────────────────────────────────────────────
+
+  downloadNfseXml(chave: string, dataEmissao: string, tenantId: string): Promise<Blob> {
+    const month = toMonthParam(dataEmissao)
+    const fileName = `${chave}-nfse-proc.xml`
+    return nfeClient.get(`/danfe/download/${encodeURIComponent(fileName)}`, {
+      params: { month },
+      headers: { 'X-Tenant-Id': tenantId },
+      responseType: 'blob',
+    }).then((r) => r.data as Blob)
+  },
+
+  downloadNfsePdf(chave: string, dataEmissao: string, tenantId: string): Promise<Blob> {
+    const month = toMonthParam(dataEmissao)
+    const fileName = `${chave}-nfse-proc-danfse.pdf`
+    return nfeClient.get(`/danfe/download/${encodeURIComponent(fileName)}`, {
+      params: { month },
+      headers: { 'X-Tenant-Id': tenantId },
+      responseType: 'blob',
+    }).then((r) => r.data as Blob)
   },
 
   downloadZip(params: { dataInicio: string; dataFim: string; tipoArquivo?: string; tipoNota?: string }): Promise<Blob> {
@@ -243,6 +296,13 @@ export function rows<T>(payload: unknown): T[] {
   const shaped = payload as { data?: T[]; table?: T[]; entities?: Array<{ data?: T[] }> } | null
   const list = shaped?.data ?? shaped?.table ?? shaped?.entities?.[0]?.data ?? []
   return Array.isArray(list) ? list : []
+}
+
+function toMonthParam(dataEmissao: string): string {
+  const d = new Date(dataEmissao)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  return `${y}${m}`
 }
 
 function toMysqlDatetime() {

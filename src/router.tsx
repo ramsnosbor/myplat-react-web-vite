@@ -29,6 +29,8 @@ const MessagesDefinitionFormPage = lazy(() => import('@/pages/system/MessagesDef
 const DFeConsultaPage = lazy(() => import('@/pages/system/DFeConsultaPage'))
 const ReportViewerPage = lazy(() => import('@/pages/system/ReportViewerPage'))
 const ReportsListPage = lazy(() => import('@/pages/system/ReportsListPage'))
+const InsightsPage = lazy(() => import('@/pages/system/InsightsPage'))
+const NfeViewerPage = lazy(() => import('@/pages/system/NfeViewerPage'))
 
 // ─── Loading fallback ─────────────────────────────────────────────────────────
 
@@ -283,6 +285,8 @@ export function AppRouter() {
               <Route path="/dfe-consulta" element={<DFeConsultaPage />} />
               <Route path="/dfe-emitentes" element={<DFeConsultaPage initialTopTab="emitentes" />} />
               <Route path="/reports" element={<ReportsListPage />} />
+              <Route path="/insights" element={<InsightsPage />} />
+              <Route path="/nfe-viewer" element={<NfeViewerPage />} />
               <Route path="/report-viewer" element={<ReportViewerPage />} />
             </Route>
           </Route>

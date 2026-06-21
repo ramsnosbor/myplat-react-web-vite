@@ -151,7 +151,10 @@ export function FilterObject({ objectDef }: Props) {
   const createBtnClass = variantClass(createVariant)
 
   return (
-    <div style={objectDef.style as React.CSSProperties}>
+    <div
+      className="w-full max-w-full min-w-0"
+      style={{ ...(objectDef.style as React.CSSProperties), boxSizing: 'border-box' }}
+    >
       {/* ── Cabeçalho (título + botão Novo quando collapsible) ─────────────── */}
       {objectDef.title && (
         <div
@@ -196,7 +199,7 @@ export function FilterObject({ objectDef }: Props) {
               const showOperator = TEXT_FIELD_TYPES.has(comp.type)
 
               return (
-                <div key={`${comp.idComponent}-${i}`} className={resolveColClass(comp.class)}>
+                <div key={`${comp.idComponent}-${i}`} className={`${resolveColClass(comp.class)} min-w-0`}>
                   {showOperator ? (
                     <div className="flex items-end gap-1">
                       <div className="min-w-0 flex-1">

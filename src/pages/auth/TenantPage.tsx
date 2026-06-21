@@ -66,13 +66,13 @@ export default function TenantPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#eaf2ff] px-4 py-8 text-slate-900">
-      <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-3xl items-center justify-center">
-        <div className="w-full rounded-lg border border-blue-100 bg-white p-6 shadow-2xl shadow-blue-950/10 sm:p-8">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
+    <div className="min-h-screen overflow-x-hidden bg-[#eaf2ff] px-3 py-6 text-slate-900 sm:px-4 sm:py-8">
+      <div className="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-3xl min-w-0 items-center justify-center sm:min-h-[calc(100vh-4rem)]">
+        <div className="w-full max-w-full min-w-0 overflow-hidden rounded-lg border border-blue-100 bg-white p-4 shadow-2xl shadow-blue-950/10 sm:p-8">
+          <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
               <p className="text-sm font-medium text-blue-700">Ambiente de trabalho</p>
-              <h1 className="mt-1 text-2xl font-semibold tracking-tight">Selecione a empresa</h1>
+              <h1 className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">Selecione a empresa</h1>
               <p className="mt-1 text-sm text-slate-500">
                 Escolha com qual empresa deseja entrar.
               </p>
@@ -86,14 +86,14 @@ export default function TenantPage() {
             <div className="mt-5 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
           )}
 
-          <ul className="mt-6 grid gap-3 sm:grid-cols-2">
+          <ul className="mt-6 grid min-w-0 gap-3 sm:grid-cols-2">
             {tenants.map((t) => (
-              <li key={t.code}>
+              <li key={t.code} className="min-w-0">
                 <button
                   onClick={() => handleSelect(t)}
                   disabled={loading || (!isLoginFlow && t.code === currentTenant?.code)}
                   className={[
-                    'group flex min-h-20 w-full items-center gap-3 rounded-md border px-4 py-3 text-left transition disabled:cursor-not-allowed',
+                    'group flex min-h-20 w-full min-w-0 items-center gap-3 rounded-md border px-3 py-3 text-left transition disabled:cursor-not-allowed sm:px-4',
                     !isLoginFlow && t.code === currentTenant?.code
                       ? 'border-blue-300 bg-blue-50'
                       : 'border-blue-100 bg-white hover:border-blue-300 hover:bg-blue-50 disabled:opacity-60',
@@ -107,9 +107,9 @@ export default function TenantPage() {
                     <span className="mt-0.5 block truncate text-xs text-slate-500">{t.code}</span>
                   </span>
                   {!isLoginFlow && t.code === currentTenant?.code ? (
-                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">Atual</span>
+                    <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">Atual</span>
                   ) : (
-                    <i className="bi bi-arrow-right text-sm text-blue-400 group-hover:text-blue-700" aria-hidden />
+                    <i className="bi bi-arrow-right shrink-0 text-sm text-blue-400 group-hover:text-blue-700" aria-hidden />
                   )}
                 </button>
               </li>

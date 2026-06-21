@@ -20,6 +20,7 @@ interface SharedProps {
   respostaItemEntity: string
   control: Control<Record<string, unknown>>
   mode: 'create' | 'edit' | 'detail'
+  apenasNaoRespondidas?: boolean
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -78,13 +79,14 @@ export function QuestionarioInlineComponent({ component: comp, control, mode = '
   const { screenParams } = useViewContext()
 
   const sharedProps: SharedProps = {
-    entidadeRef:       String(def.entidadeRef        ?? ''),
-    idRefField:        String(def.idRefField         ?? ''),
-    perguntaEntity:    String(def.perguntaEntity     ?? 'questionarioPergunta'),
-    respostaEntity:    String(def.respostaEntity     ?? 'questionarioResposta'),
+    entidadeRef:        String(def.entidadeRef        ?? ''),
+    idRefField:         String(def.idRefField         ?? ''),
+    perguntaEntity:     String(def.perguntaEntity     ?? 'questionarioPergunta'),
+    respostaEntity:     String(def.respostaEntity     ?? 'questionarioResposta'),
     respostaItemEntity: String(def.respostaItemEntity ?? 'questionarioRespostaItem'),
     control,
     mode,
+    apenasNaoRespondidas: Boolean(def.apenasNaoRespondidas),
   }
 
   // Prioridade 1: ID fixo no JSON
@@ -179,6 +181,7 @@ function QuestionarioSection({
   respostaItemEntity,
   control,
   mode,
+  apenasNaoRespondidas,
 }: SharedProps & { idQuestionario: number; sectionTitle?: string }) {
   const isDetail = mode === 'detail'
 
@@ -502,30 +505,45 @@ function QuestionarioSection({
 
       {/* Perguntas */}
       <div className="grid grid-cols-12 gap-3">
-        {questions.map(q => {
-          if (q.tp_resposta === 'section') {
+        {(() => {
+          // Quando apenasNaoRespondidas: oculta perguntas com nm_campo_auto preenchido
+          // (respondidas automaticamente pela view vinculada). Seções só aparecem se
+          // o bloco que segue tiver ao menos uma pergunta visível.
+          const isHidden = (q: Question) => apenasNaoRespondidas && !!q.nm_campo_auto
+
+          return questions.map((q, idx) => {
+            if (q.tp_resposta === 'section') {
+              if (apenasNaoRespondidas) {
+                // Verifica se existe alguma pergunta visível no bloco desta seção
+                const rest = questions.slice(idx + 1)
+                const nextSection = rest.findIndex(r => r.tp_resposta === 'section')
+                const block = nextSection === -1 ? rest : rest.slice(0, nextSection)
+                if (block.every(r => isHidden(r))) return null
+              }
+              return (
+                <div key={q.id_pergunta} className="col-span-12 flex items-center gap-3 py-1">
+                  <div className="flex-1 border-t border-border" />
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground whitespace-nowrap">
+                    {q.ds_texto}
+                  </span>
+                  <div className="flex-1 border-t border-border" />
+                </div>
+              )
+            }
+            if (isHidden(q)) return null
+            const span = q.nr_colunas === 3 ? 3 : q.nr_colunas === 4 ? 4 : q.nr_colunas === 6 ? 6 : 12
             return (
-              <div key={q.id_pergunta} className="col-span-12 flex items-center gap-3 py-1">
-                <div className="flex-1 border-t border-border" />
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground whitespace-nowrap">
+              <div key={q.id_pergunta} className={`col-span-${span} space-y-1`}>
+                <label className="text-sm font-medium leading-none">
                   {q.ds_texto}
-                </span>
-                <div className="flex-1 border-t border-border" />
+                  {q.fl_obrigatorio === 'SIM' && <span className="ml-0.5 text-destructive">*</span>}
+                </label>
+                {q.ds_ajuda && <p className="text-xs text-muted-foreground">{q.ds_ajuda}</p>}
+                {renderInput(q)}
               </div>
             )
-          }
-          const span = q.nr_colunas === 3 ? 3 : q.nr_colunas === 4 ? 4 : q.nr_colunas === 6 ? 6 : 12
-          return (
-            <div key={q.id_pergunta} className={`col-span-${span} space-y-1`}>
-              <label className="text-sm font-medium leading-none">
-                {q.ds_texto}
-                {q.fl_obrigatorio === 'SIM' && <span className="ml-0.5 text-destructive">*</span>}
-              </label>
-              {q.ds_ajuda && <p className="text-xs text-muted-foreground">{q.ds_ajuda}</p>}
-              {renderInput(q)}
-            </div>
-          )
-        })}
+          })
+        })()}
       </div>
     </div>
   )

@@ -6,7 +6,10 @@ import type { AclMap, ModuleDefinition, MenuItemDefinition } from '@/api/auth.ap
 import { getTenantModuleIds, filterModules, sortMenusByModuleOrder, isClienteToken, isFullAdminToken, resolveHomePath } from '@/pages/auth/authFlow'
 
 const LEAF_TYPES = new Set(['son', 'item', 'I'])
+export const DEFAULT_MENU_ITEM_ICON = 'bi bi-arrow-return-right'
 const STATIC_SCREEN_ROUTES: Record<string, string> = {
+  insights: '/insights',
+  'nfe-viewer': '/nfe-viewer',
   'dfe-consulta': '/dfe-consulta',
   dfeConsulta: '/dfe-consulta',
   'dfe-emitentes': '/dfe-emitentes',
@@ -17,7 +20,7 @@ function isLeaf(menu: MenuItemDefinition) {
   return LEAF_TYPES.has(menu.type) && !!menu.url
 }
 
-function parseMenuUrl(url: string): {
+export function parseMenuUrl(url: string): {
   screen?: string
   params?: Record<string, string>
   search?: string
@@ -108,7 +111,7 @@ function useEnsureModulesLoaded() {
   return { modules, bootStatus }
 }
 
-function navigateToParsedMenu(navigate: ReturnType<typeof useNavigate>, parsed: ReturnType<typeof parseMenuUrl>) {
+export function navigateToParsedMenu(navigate: ReturnType<typeof useNavigate>, parsed: ReturnType<typeof parseMenuUrl>) {
   const staticRoute = STATIC_SCREEN_ROUTES[parsed.screen ?? '']
   if (staticRoute) {
     navigate(`${staticRoute}${parsed.search ?? ''}`, parsed.params ? { state: { initialParams: parsed.params } } : undefined)
@@ -415,7 +418,7 @@ function MobileMenuLeaf({ item, onNavigate }: { item: MenuItemDefinition; onNavi
 
   return (
     <MobilePanelCard
-      icon={item.icon ?? 'bi bi-circle'}
+      icon={item.icon ?? DEFAULT_MENU_ITEM_ICON}
       label={item.label}
       onClick={handleClick}
     />
@@ -732,7 +735,7 @@ function FlyoutMenuItem({
         ].join(' ')}
         aria-hidden
       />
-      <i className={`${item.icon ?? 'bi bi-circle'} shrink-0 text-base`} aria-hidden />
+      <i className={`${item.icon ?? DEFAULT_MENU_ITEM_ICON} shrink-0 text-base`} aria-hidden />
       <span className="min-w-0 flex-1 truncate">{item.label}</span>
     </button>
   )

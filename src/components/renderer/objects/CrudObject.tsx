@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react'
+import { useEffect, useCallback, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useForm, useWatch } from 'react-hook-form'
 import { useStore } from 'zustand'
@@ -16,6 +16,7 @@ import { evalExpr, evalArithmeticExpr, interpolateExpr } from '@/utils/evalExpr'
 import type { ObjectDefinition, CrudAction } from '@/types/view.types'
 import type { EntityRecord } from '@/types/entity.types'
 import type { ObjectState } from '@/store/viewStore'
+import { storePendingUpload } from '@/utils/pendingUpload'
 
 interface Props {
   objectDef: ObjectDefinition
@@ -25,6 +26,10 @@ type CrudMode = 'create' | 'edit' | 'detail'
 
 // ─── CrudObject ───────────────────────────────────────────────────────────────
 
+function resolveActionRoute(path: string) {
+  return path.startsWith('/') ? path : `/home/${path}`
+}
+
 export function CrudObject({ objectDef }: Props) {
   const navigate = useNavigate()
   const { viewStore, initialParams = {}, connections, definition, screenParams } = useViewContext()
@@ -33,6 +38,8 @@ export function CrudObject({ objectDef }: Props) {
   const queryClient = useQueryClient()
   const toast = useToast()
   const { confirm, confirmDialog } = useConfirm()
+  const uploadInputRef = useRef<HTMLInputElement | null>(null)
+  const [uploadAction, setUploadAction] = useState<CrudAction | null>(null)
 
   // Mapa id→entity: nos objetos/componentes "entity" guarda o entities[].id,
   // mas a API recebe o entities[].entity (que pode diferir do id).
@@ -55,6 +62,14 @@ export function CrudObject({ objectDef }: Props) {
 
   const connectionParams = useConnectionParams(objectDef.id)
   const parentIsCreating = useParentIsCreating(objectDef.id)
+
+  // Este crud é filho de uma connection bloqueante? (ex: crudFichaEsperaPrincipal ← crudPessoa)
+  // Filhos de conexão têm o seu entityId derivado dos params do pai, que chegam com atraso.
+  // Enquanto não chegam, entityId é transitoriamente undefined — isso NÃO significa "create",
+  // significa "carregando". Usado para evitar pinar o modo prematuramente.
+  const isBlockingChild = connections.some(
+    (c) => c.child === objectDef.id && c.blocking !== false,
+  )
 
   const qp = objectState?.queryParams
 
@@ -136,7 +151,7 @@ export function CrudObject({ objectDef }: Props) {
 
   // Carrega o registro usando os params da action como filtro:
   // GET /default/{entity}?{...loadFilter}&pageSize=1
-  const { data: record, isLoading: isLoadingRecord } = useQuery({
+  const { data: record, isLoading: isLoadingRecord, isFetching: isFetchingRecord } = useQuery({
     queryKey: ['entity-single', entityName, JSON.stringify(loadFilter)],
     queryFn: async () => {
       const res = await entityApi.getList<EntityRecord>(entityName, {
@@ -144,7 +159,12 @@ export function CrudObject({ objectDef }: Props) {
         pageSize: 1,
       })
       const rows = (res as { data?: EntityRecord[] }).data ?? (Array.isArray(res) ? res as EntityRecord[] : [])
-      return rows[0] as EntityRecord | undefined
+      // IMPORTANTE: retorna null (não undefined) quando não há registro.
+      // No React Query v5, retornar undefined do queryFn é rejeitado — a lib mantém os
+      // dados anteriores em cache em vez de atualizar para "vazio". Isso fazia o crud
+      // "navegar no histórico": ao recarregar um registro sem filho, mantinha os dados
+      // do registro anterior e o modo nunca voltava para create.
+      return (rows[0] ?? null) as EntityRecord | null
     },
     enabled: !!entityId && !!entityName && !isCreate,
     staleTime: 0,
@@ -240,11 +260,16 @@ export function CrudObject({ objectDef }: Props) {
   // seus botões. Sem isso, os filhos veem mode=null + formData.id_*="0" (defaultValue)
   // e consideram o pai "habilitado", mostrando botões incorretamente.
   useEffect(() => {
-    if (isCreate && !objectState?.mode) {
-      setObjectState(objectDef.id, { mode: 'create' })
-    }
+    if (!isCreate || objectState?.mode) return
+    // Filho de conexão ainda aguardando os params do pai: entityId transitoriamente ausente
+    // é "carregando", não "create". Pinar 'create' aqui trava o modo no store (storeMode tem
+    // prioridade no resolvedMode) e impede o load do registro quando os params chegam — é a
+    // causa do bug "mantém create mesmo tendo registro".
+    // Exceção: se o pai está de fato criando (parentIsCreating), não há registro mesmo → pina create.
+    if (isBlockingChild && !parentIsCreating && Object.keys(connectionParams).length === 0) return
+    setObjectState(objectDef.id, { mode: 'create' })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCreate])
+  }, [isCreate, parentIsCreating, JSON.stringify(connectionParams)])
 
   // Auto-detecta mode para objetos filhos conectados via connectionParams:
   // Se o pai propagou um ID mas a entidade filha não tem registro (ainda não foi criado),
@@ -260,7 +285,10 @@ export function CrudObject({ objectDef }: Props) {
   //   - o registro existe (record !== undefined)
   //   - a query ainda está carregando
   useEffect(() => {
-    if (isCreate || isLoadingRecord || !entityId || record !== undefined) return
+    // isFetchingRecord: com staleTime:0 o cache de uma visita anterior é servido
+    // imediatamente enquanto refaz o fetch (isLoading=false, mas isFetching=true).
+    // Sem este guard, agiríamos sobre dados desatualizados durante a re-busca.
+    if (isCreate || isLoadingRecord || isFetchingRecord || !entityId || record != null) return
     const explicitMode = objectState?.mode
     // Só auto-muda se o modo não foi definido explicitamente (null/undefined = inferido)
     // ou se ainda está no modo inferido 'detail'/'edit' sem registro encontrado
@@ -268,7 +296,7 @@ export function CrudObject({ objectDef }: Props) {
       setObjectState(objectDef.id, { mode: 'create' })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoadingRecord, record, entityId])
+  }, [isLoadingRecord, isFetchingRecord, record, entityId])
 
   // Preenche o form quando o registro carrega ou o ID muda
   useEffect(() => {
@@ -290,7 +318,16 @@ export function CrudObject({ objectDef }: Props) {
       // não sejam perdidos quando o record do banco sobrescreve o formData. Esses campos não entram
       // em watchedValues (não são registrados no form), então o effect de watchedValues não os restaura
       // se o record tiver os mesmos valores que o form já tinha (JSON.stringify igual → effect não roda).
-      setObjectState(objectDef.id, { formData: { ...(record as Record<string, unknown>), ...computedOverrides } })
+      //
+      // Filho de conexão com modo puramente inferido: ao achar registro, a inferência padrão é
+      // 'detail' (entityId presente, sem modo no store/nav/def). Mas um sub-formulário vinculado ao
+      // pai deve ser editável → transiciona para 'edit'. Sem isso, o filho com dados fica read-only.
+      // Não toca em modos explícitos (storeMode/navMode/defMode) nem em cruds raiz.
+      const modeIsInferred = !objectState?.mode && !initialParams._mode && !objectDef.mode
+      setObjectState(objectDef.id, {
+        formData: { ...(record as Record<string, unknown>), ...computedOverrides },
+        ...(isBlockingChild && modeIsInferred ? { mode: 'edit' } : {}),
+      })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [record, entityId, isCreate])
@@ -405,11 +442,11 @@ export function CrudObject({ objectDef }: Props) {
         : (objectDef.afterUpdate ?? [])
       for (const hook of hooks) {
         if (hook.type === 'script') {
-          // Resolve params estáticos do hook (ex: {{UTILIZA_PLANO_GERENCIAL}}) contra screenParams + form
+          // Resolve params estáticos do hook contra screenParams + initialParams + newRecord
           const hookCustomParams: Record<string, unknown> = {}
           for (const [key, val] of Object.entries(hook.params ?? {})) {
             hookCustomParams[key] = val.includes('{{')
-              ? interpolateExpr(val, { ...screenParams, ...newRecord })
+              ? interpolateExpr(val, { ...screenParams, ...initialParams, ...newRecord })
               : val
           }
           scriptApi.execute(hook.name ?? hook.scriptId ?? hook.script, {
@@ -599,8 +636,10 @@ export function CrudObject({ objectDef }: Props) {
         .map(([key, val]) => [key, normalizeDatetimeForDb(val)])
     )
     // Garante FKs da connection pai→filho no body.
+    // Nota: connectionParams NÃO respeita transientKeys — a connection declara explicitamente
+    // que o pai deve passar este FK. Isso tem prioridade mesmo que a chave esteja em initialParams
+    // e não tenha componente explícito no filho (ex: id_pessoa no CRUDPessoaEndereco).
     for (const [key, value] of Object.entries(connectionParams)) {
-      if (transientKeys.has(key)) continue
       const current = body[key]
       const isUnresolved =
         typeof current === 'string' && /\{\{/.test(current)
@@ -740,6 +779,18 @@ export function CrudObject({ objectDef }: Props) {
     [objectDef.id, entityName, resolvedMode],
   )
 
+  function handleUploadNavigate(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    const action = uploadAction
+    event.target.value = ''
+    setUploadAction(null)
+    if (!file || !action?.url) return
+    const uploadToken = storePendingUpload(file)
+    navigate(resolveActionRoute(action.url), {
+      state: { uploadToken, uploadFileName: file.name, uploadAction: action.title ?? action.action ?? 'Importar arquivo' },
+    })
+  }
+
   // Handler de ação customizada
   const handleCrudAction = useCallback(
     async (action: CrudAction) => {
@@ -832,10 +883,21 @@ export function CrudObject({ objectDef }: Props) {
             })
           break
         }
+        case 'uploadNavigate':
+        case 'openUpload': {
+          if (!action.url) { toast.error('Informe a rota de destino para a ação de upload.'); break }
+          setUploadAction(action)
+          requestAnimationFrame(() => uploadInputRef.current?.click())
+          break
+        }
         case 'navigate':
         case 'navigation': {
           const screen = action.url ?? action.object ?? ''
           if (!screen) break
+          for (const entity of action.reloadEntities ?? []) {
+            queryClient.removeQueries({ queryKey: ['entity', entity] })
+            queryClient.removeQueries({ queryKey: ['entity-single', entity] })
+          }
           const params = action.params
             ? Object.fromEntries(
                 Object.entries(action.params).map(([k, v]) => [
@@ -926,8 +988,13 @@ export function CrudObject({ objectDef }: Props) {
   })
 
   // Botões de salvar: só em create/edit, nunca em detail
+  // showSaveButtons aceita boolean ou expressão string (avaliada contra formValues)
+  const showSaveButtonsRaw = objectDef.showSaveButtons
+  const showSaveButtonsOk = typeof showSaveButtonsRaw === 'string'
+    ? evalExpr(showSaveButtonsRaw, formValues) !== false
+    : showSaveButtonsRaw !== false
   const showStandardButtons =
-    objectDef.showSaveButtons !== false &&
+    showSaveButtonsOk &&
     objectDef.hideButtons !== true &&
     !isDetail
 
@@ -937,6 +1004,13 @@ export function CrudObject({ objectDef }: Props) {
   return (
     <div style={objectDef.style as React.CSSProperties}>
       {confirmDialog}
+      <input
+        ref={uploadInputRef}
+        type="file"
+        className="hidden"
+        accept={uploadAction?.accept ?? '.xml,application/xml,text/xml'}
+        onChange={handleUploadNavigate}
+      />
       {/* Header — suprimido em modal (o ModalWrapper já exibe o título no header) */}
       {objectDef.title && objectDef.variant !== 'modal' && (
         <h3 className="mb-3 text-sm font-semibold text-foreground">

@@ -5,6 +5,7 @@ import { authApi, type User } from '@/api/auth.api'
 import { termsApi, type CurrentTerms, type TermsStatus } from '@/api/terms.api'
 import { useAuthStore } from '@/store/authStore'
 import { useToast } from '@/components/ui/Toast'
+import pushNotificationService from '@/services/pushNotificationService'
 
 interface ProfileFormState {
   nome: string
@@ -42,15 +43,21 @@ export default function ProfilePage() {
   }, [user, setUser])
 
   useEffect(() => {
-    const supported = typeof window !== 'undefined' && 'Notification' in window
-    setPushSupported(supported)
-    if (!supported) {
-      setPushPermission('unsupported')
-      setPushEnabled(false)
-      return
+    const initPush = async () => {
+      const supported = pushNotificationService.isAvailable()
+      setPushSupported(supported)
+      if (!supported) {
+        setPushPermission('unsupported')
+        setPushEnabled(false)
+        return
+      }
+      setPushPermission(Notification.permission)
+      await pushNotificationService.init()
+      const subscribed = await pushNotificationService.isSubscribed()
+      setPushEnabled(subscribed)
+      setPushPermission(Notification.permission)
     }
-    setPushPermission(Notification.permission)
-    setPushEnabled(Notification.permission === 'granted')
+    void initPush()
   }, [])
 
   const { data: termsData, isLoading: termsLoading } = useQuery({
@@ -130,16 +137,17 @@ export default function ProfilePage() {
     setPushLoading(true)
     try {
       if (pushEnabled) {
+        await pushNotificationService.unsubscribe()
         setPushEnabled(false)
-        toast.success('Notificacoes desativadas nesta sessao.')
-        return
+        toast.success('Notificacoes desativadas.')
+      } else {
+        await pushNotificationService.subscribe()
+        setPushEnabled(true)
+        setPushPermission('granted')
+        toast.success('Notificacoes ativadas.')
       }
-
-      const permission = await Notification.requestPermission()
-      setPushPermission(permission)
-      setPushEnabled(permission === 'granted')
-      if (permission === 'granted') toast.success('Notificacoes ativadas.')
-      else toast.error('Permissao de notificacao nao concedida.')
+    } catch {
+      setPushPermission(Notification.permission)
     } finally {
       setPushLoading(false)
     }

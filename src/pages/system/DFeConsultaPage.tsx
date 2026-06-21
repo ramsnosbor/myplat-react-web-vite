@@ -1,9 +1,11 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { Cell, Pie, PieChart } from 'recharts'
 import { useToast } from '@/components/ui/Toast'
 import { AppShell } from '@/components/layout/AppShell'
 import { dfeApi, rows, type DFeRecord, type EmpresaEmitentePeriodo, type NfeRecord, type NfeRepeticaoRecord, type ServicoRecord } from '@/api/dfe.api'
+import { useAuthStore } from '@/store/authStore'
 
 type TopTab = 'hub' | 'emitentes'
 type HubTab = 'pendentes' | 'emitidos' | 'recebidos'
@@ -27,6 +29,8 @@ const manifestOptions: Array<{ value: ManifestAction; label: string }> = [
 
 export default function DFeConsultaPage({ initialTopTab = 'hub' }: DFeConsultaPageProps) {
   const toast = useToast()
+  const navigate = useNavigate()
+  const tenantId = useAuthStore((s) => s.tenant?.code ?? s.user?.tenant?.code ?? '')
   const [topTab, setTopTab] = useState<TopTab>(initialTopTab)
   const [hubTab, setHubTab] = useState<HubTab>('pendentes')
   const [filters, setFilters] = useState({
@@ -380,10 +384,26 @@ export default function DFeConsultaPage({ initialTopTab = 'hub' }: DFeConsultaPa
 
   async function downloadPdf(item: DFeRecord | NfeRecord) {
     try {
-      const id = getDfeId(item)
-      if (!id) return
-      const blob = await dfeApi.downloadPdf(id)
-      downloadBlob(blob, `DFe_${getDfeKey(item) || id}.pdf`)
+      if (hubTab === 'emitidos') {
+        const nfe = item as NfeRecord
+        const chave = nfe.chave_acesso ?? ''
+        const dataEmissao = nfe.data_emissao ?? ''
+        if (!chave || !dataEmissao) return
+        if (emitidosSubTab === 'servico') {
+          const blob = await dfeApi.downloadNfsePdf(chave, dataEmissao, tenantId)
+          downloadBlob(blob, `${chave}-nfse-proc-danfse.pdf`)
+        } else {
+          const nmArquivoXml = nfe.nm_arquivo_xml ?? ''
+          if (!nmArquivoXml) return
+          const blob = await dfeApi.downloadNfePdf(chave, nmArquivoXml, dataEmissao, tenantId)
+          downloadBlob(blob, `DFe_${chave}.pdf`)
+        }
+      } else {
+        const id = getDfeId(item)
+        if (!id) return
+        const blob = await dfeApi.downloadPdf(id)
+        downloadBlob(blob, `DFe_${getDfeKey(item) || id}.pdf`)
+      }
     } catch {
       toast.error('Erro ao baixar PDF.')
     }
@@ -391,12 +411,54 @@ export default function DFeConsultaPage({ initialTopTab = 'hub' }: DFeConsultaPa
 
   async function downloadXml(item: DFeRecord | NfeRecord) {
     try {
-      const id = getDfeId(item)
-      if (!id) return
-      const xml = await dfeApi.getXml(id)
-      downloadBlob(new Blob([xml], { type: 'application/xml' }), `${getDfeKey(item) || id}-nfe.xml`)
+      if (hubTab === 'emitidos') {
+        const nfe = item as NfeRecord
+        const chave = nfe.chave_acesso ?? ''
+        const dataEmissao = nfe.data_emissao ?? ''
+        if (!chave || !dataEmissao) return
+        if (emitidosSubTab === 'servico') {
+          const blob = await dfeApi.downloadNfseXml(chave, dataEmissao, tenantId)
+          downloadBlob(blob, `${chave}-nfse-proc.xml`)
+        } else {
+          const nmArquivoXml = nfe.nm_arquivo_xml ?? ''
+          if (!nmArquivoXml) return
+          const xml = await dfeApi.getNfeXml(nmArquivoXml, dataEmissao, tenantId)
+          downloadBlob(new Blob([xml], { type: 'application/xml' }), `${chave}-nfe.xml`)
+        }
+      } else {
+        const id = getDfeId(item)
+        if (!id) return
+        const xml = await dfeApi.getXml(id)
+        downloadBlob(new Blob([xml], { type: 'application/xml' }), `${getDfeKey(item) || id}-nfe.xml`)
+      }
     } catch {
       toast.error('Erro ao baixar XML.')
+    }
+  }
+
+  async function viewXml(item: DFeRecord | NfeRecord) {
+    try {
+      let xml = ''
+      if (hubTab === 'emitidos') {
+        const nfe = item as NfeRecord
+        if (String(nfe.ds_tipo_nfe ?? '').toLowerCase().includes('serv')) {
+          toast.error('A visualizacao de XML para NFSe ainda nao esta disponivel.')
+          return
+        }
+        const fileName = nfe.nm_arquivo_xml ?? ''
+        if (!fileName) throw new Error('XML nao encontrado para esta nota.')
+        xml = await dfeApi.getNfeXml(fileName, nfe.data_emissao ?? '', tenantId)
+      } else {
+        xml = await dfeApi.getXml(getDfeId(item))
+      }
+      navigate('/nfe-viewer', {
+        state: {
+          xmlContent: xml,
+          dfeId: hubTab === 'pendentes' ? getDfeId(item) : undefined,
+        },
+      })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erro ao carregar XML para visualizacao.')
     }
   }
 
@@ -592,6 +654,7 @@ export default function DFeConsultaPage({ initialTopTab = 'hub' }: DFeConsultaPa
                 onReject={rejectDFe}
                 onPdf={downloadPdf}
                 onXml={downloadXml}
+                onViewXml={viewXml}
                 orderBy={orderBy}
                 orderDirection={orderDirection}
                 onSort={(field) => {
@@ -956,6 +1019,7 @@ function DFeTable({
   onReject,
   onPdf,
   onXml,
+  onViewXml,
   orderBy,
   orderDirection,
   onSort,
@@ -970,6 +1034,7 @@ function DFeTable({
   onReject: (item: DFeRecord) => void
   onPdf: (item: DFeRecord | NfeRecord) => void
   onXml: (item: DFeRecord | NfeRecord) => void
+  onViewXml: (item: DFeRecord | NfeRecord) => void
   orderBy: string
   orderDirection: 'asc' | 'desc'
   onSort: (field: string) => void
@@ -985,7 +1050,7 @@ function DFeTable({
               {isPending && <th className={thClass}><input type="checkbox" checked={selectedIds.length === rowsData.length && rowsData.length > 0} onChange={onToggleAll} /></th>}
               <SortTh field="dataEmissao" active={orderBy} direction={orderDirection} onSort={onSort}>Emissao</SortTh>
               <th className={thClass}>Numero</th>
-              <SortTh field="nomeEmitente" active={orderBy} direction={orderDirection} onSort={onSort}>Emitente</SortTh>
+              <SortTh field="nomeEmitente" active={orderBy} direction={orderDirection} onSort={onSort}>Cliente/Fornecedor/Emitente</SortTh>
               <th className={thClass}>Chave / Protocolo</th>
               <th className={`${thClass} text-right`}>Valor</th>
               <SortTh field="status" active={orderBy} direction={orderDirection} onSort={onSort}>Status</SortTh>
@@ -1002,7 +1067,23 @@ function DFeTable({
                   {isPending && <td className={tdClass}><input type="checkbox" checked={selectedIds.includes(id)} onChange={() => onToggle(id)} /></td>}
                   <td className={tdClass}>{formatDate(getDfeDate(item))}</td>
                   <td className={`${tdClass} tabular-nums`}>{getDfeNumero(item)}</td>
-                  <td className={`${tdClass} truncate`}>{getDfePerson(item)}</td>
+                  <td className={`${tdClass} text-xs`}>
+                    {(() => {
+                      if (!('nomeEmitente' in item)) {
+                        const nfe = item as NfeRecord
+                        const cli = nfe.nome_pessoa_cli_for as string | undefined
+                        const emit = nfe.nome_pessoa as string | undefined
+                        return (
+                          <>
+                            {cli ? <span className="block truncate">{cli}</span> : null}
+                            {emit ? <span className="block truncate text-slate-500">{emit}</span> : null}
+                            {!cli && !emit ? <span>-</span> : null}
+                          </>
+                        )
+                      }
+                      return <span className="block truncate">{getDfePerson(item)}</span>
+                    })()}
+                  </td>
                   <td className={`${tdClass} text-xs`}>
                     {chave ? <span className="block truncate font-mono">{chave}</span> : null}
                     {protocolo !== '-' && protocolo !== chave ? <span className="block truncate text-slate-500">{protocolo}</span> : null}
@@ -1014,6 +1095,7 @@ function DFeTable({
                     <div className="flex items-center gap-1">
                       {isPending && <IconButton title="Manifestar" icon="bi bi-check-circle" tone="success" onClick={() => onManifest(item as DFeRecord)} />}
                       <IconButton title="PDF" icon="bi bi-file-pdf" tone="danger" onClick={() => onPdf(item)} />
+                      <IconButton title="Visualizar e importar" icon="bi bi-eye" tone="primary" onClick={() => onViewXml(item)} />
                       <IconButton title="XML" icon="bi bi-file-code" tone="primary" onClick={() => onXml(item)} />
                       {isPending && <IconButton title="Tratar manualmente" icon="bi bi-x-circle" tone="warning" onClick={() => onReject(item as DFeRecord)} />}
                     </div>
@@ -1042,7 +1124,13 @@ function getDfeId(item: DFeRecord | NfeRecord): string | number {
   return typeof value === 'number' || typeof value === 'string' ? value : String(value)
 }
 function getDfeDate(item: DFeRecord | NfeRecord) { return ('dataEmissao' in item ? item.dataEmissao : item.data_emissao) as string | undefined }
-function getDfePerson(item: DFeRecord | NfeRecord) { return (('nomeEmitente' in item ? item.nomeEmitente : item.nome_pessoa_cli_for) as string | undefined) ?? '-' }
+function getDfePerson(item: DFeRecord | NfeRecord) {
+  if ('nomeEmitente' in item) return (item.nomeEmitente as string | undefined) ?? '-'
+  const nfe = item as NfeRecord
+  return (nfe.nome_pessoa_cli_for as string | undefined)
+    ?? (nfe.nome_pessoa as string | undefined)
+    ?? '-'
+}
 function getDfeKey(item: DFeRecord | NfeRecord) { return (('chaveNfe' in item ? item.chaveNfe : item.chave_acesso) as string | undefined) ?? '' }
 function getDfeNumero(item: DFeRecord | NfeRecord) {
   const val = ('numeroNf' in item ? item.numeroNf : item.numero) as string | number | undefined
