@@ -147,8 +147,8 @@ export function FilterObject({ objectDef }: Props) {
   function handleUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file || !uploadAction) return
-    storePendingUpload(file)
-    navigate(uploadAction.url)
+    const token = storePendingUpload(file)
+    navigate(uploadAction.url, { state: { uploadToken: token, uploadFileName: file.name } })
     e.target.value = ''
   }
 
