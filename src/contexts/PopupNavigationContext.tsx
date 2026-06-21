@@ -1,22 +1,18 @@
-import { createContext, useContext, useState, useCallback, useRef, useEffect, useId } from 'react'
-import { createPortal } from 'react-dom'
-import { ViewRenderer } from '@/components/renderer/ViewRenderer'
+import { createContext, useContext, useState, useCallback, useId, useEffect } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface PopupState {
+export interface PopupState {
   screen: string
   initialParams?: Record<string, unknown>
 }
 
 interface PopupNavigationContextValue {
-  /** Abre uma tela como popup overlay */
+  stack: PopupState[]
   openPopup(screen: string, initialParams?: Record<string, unknown>): void
-  /** True quando alguma view com newFormShowPopup:true está montada em primeiro plano */
+  closeTop(): void
   isPopupModeActive: boolean
-  /** Chamado por ViewRenderer quando carrega uma view com newFormShowPopup:true */
   registerPopupMode(id: string): void
-  /** Chamado por ViewRenderer ao desmontar ou quando o flag deixa de ser true */
   unregisterPopupMode(id: string): void
 }
 
@@ -54,24 +50,24 @@ export function PopupNavigationProvider({ children }: { children: React.ReactNod
     })
   }, [])
 
-  const isPopupModeActive = activeIds.size > 0
-
   return (
-    <PopupNavigationContext.Provider value={{ openPopup, isPopupModeActive, registerPopupMode, unregisterPopupMode }}>
+    <PopupNavigationContext.Provider
+      value={{
+        stack,
+        openPopup,
+        closeTop,
+        isPopupModeActive: activeIds.size > 0,
+        registerPopupMode,
+        unregisterPopupMode,
+      }}
+    >
       {children}
-      {stack.map((popup, i) => (
-        <PopupModal
-          key={`${popup.screen}-${i}`}
-          popup={popup}
-          onClose={closeTop}
-          isTop={i === stack.length - 1}
-        />
-      ))}
     </PopupNavigationContext.Provider>
   )
 }
 
-// ─── Hook para ViewRenderer registrar popup mode ──────────────────────────────
+// ─── useRegisterPopupMode ─────────────────────────────────────────────────────
+// Chamado por ViewRenderer — registra quando a view tem newFormShowPopup:true
 
 export function useRegisterPopupMode(active: boolean) {
   const ctx = usePopupNavigation()
@@ -82,61 +78,4 @@ export function useRegisterPopupMode(active: boolean) {
     ctx.registerPopupMode(id)
     return () => ctx.unregisterPopupMode(id)
   }, [ctx, active, id])
-}
-
-// ─── PopupModal ───────────────────────────────────────────────────────────────
-
-function PopupModal({
-  popup,
-  onClose,
-  isTop,
-}: {
-  popup: PopupState
-  onClose: () => void
-  isTop: boolean
-}) {
-  const backdropRef = useRef<HTMLDivElement>(null)
-
-  function handleBackdropClick(e: React.MouseEvent) {
-    if (e.target === backdropRef.current) onClose()
-  }
-
-  return createPortal(
-    <div
-      ref={backdropRef}
-      className={[
-        'fixed inset-0 z-[9000] flex items-stretch justify-center bg-black/60 backdrop-blur-sm transition-opacity',
-        isTop ? 'opacity-100' : 'opacity-60 pointer-events-none',
-      ].join(' ')}
-      onClick={handleBackdropClick}
-    >
-      <div
-        className="relative flex flex-col bg-background shadow-2xl w-full max-w-[95vw] max-h-screen overflow-hidden rounded-none md:my-4 md:rounded-xl md:max-h-[calc(100vh-2rem)]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex shrink-0 items-center justify-between border-b border-border bg-muted/50 px-4 py-3">
-          <span className="text-sm font-semibold text-foreground">{popup.screen}</span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            aria-label="Fechar"
-          >
-            <i className="bi bi-x-lg text-sm" aria-hidden />
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-auto">
-          <ViewRenderer
-            key={`popup-${popup.screen}-${JSON.stringify(popup.initialParams ?? {})}`}
-            screenName={popup.screen}
-            initialParams={popup.initialParams}
-          />
-        </div>
-      </div>
-    </div>,
-    document.body,
-  )
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { AppMobileBottomNav, AppSidebar, DEFAULT_MENU_ITEM_ICON, navigateToParsedMenu, parseMenuUrl, useMenuNavigate } from './AppSidebar'
+import { AppMobileBottomNav, AppSidebar, DEFAULT_MENU_ITEM_ICON, parseMenuUrl, useMenuNavigate } from './AppSidebar'
 import type { MenuItemDefinition, ModuleDefinition } from '@/api/auth.api'
 import { notificationApi, type NotificationItem } from '@/api/notification.api'
 import { useAuthStore } from '@/store/authStore'
