@@ -1328,6 +1328,16 @@ function errMsg(err: unknown): string {
 
 const DROPDOWN_MAX_H = 220
 
+let _portalRoot: HTMLDivElement | null = null
+function getPortalRoot(): HTMLDivElement {
+  if (!_portalRoot || !document.body.contains(_portalRoot)) {
+    _portalRoot = document.createElement('div')
+    _portalRoot.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;'
+    document.body.appendChild(_portalRoot)
+  }
+  return _portalRoot
+}
+
 function Combobox({ value, onChange, options, placeholder }: {
   value: string
   onChange: (id: string) => void
@@ -1371,34 +1381,25 @@ function Combobox({ value, onChange, options, placeholder }: {
   }, [open, close])
 
   const dropdown = open && pos ? ReactDOM.createPortal(
-    <ul
-      style={{
-        position: 'fixed',
-        top: pos.above ? undefined : pos.top,
-        bottom: pos.above ? window.innerHeight - pos.top : undefined,
-        left: pos.left,
-        width: pos.width,
-        maxHeight: DROPDOWN_MAX_H,
-        zIndex: 9999,
-      }}
-      className="overflow-y-auto rounded-md border border-slate-200 bg-white shadow-xl text-xs"
-    >
-      {filtered.length === 0 ? (
-        <li className="px-3 py-2 text-slate-400">Nenhum resultado</li>
-      ) : (
-        filtered.slice(0, 100).map((o) => (
-          <li
-            key={o.id}
-            className={`cursor-pointer px-3 py-2 hover:bg-blue-50 ${o.id === value ? 'bg-blue-50 font-medium text-blue-700' : 'text-slate-700'}`}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => { onChange(o.id); close() }}
-          >
-            {o.label}
-          </li>
-        ))
-      )}
-    </ul>,
-    document.body,
+    <div style={{ position: 'absolute', top: pos.above ? undefined : pos.top, bottom: pos.above ? window.innerHeight - pos.top : undefined, left: pos.left, width: pos.width, pointerEvents: 'auto' }}>
+      <ul style={{ maxHeight: DROPDOWN_MAX_H }} className="overflow-y-auto rounded-md border border-slate-200 bg-white shadow-xl text-xs">
+        {filtered.length === 0 ? (
+          <li className="px-3 py-2 text-slate-400">Nenhum resultado</li>
+        ) : (
+          filtered.slice(0, 100).map((o) => (
+            <li
+              key={o.id}
+              className={`cursor-pointer px-3 py-2 hover:bg-blue-50 ${o.id === value ? 'bg-blue-50 font-medium text-blue-700' : 'text-slate-700'}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onChange(o.id); close() }}
+            >
+              {o.label}
+            </li>
+          ))
+        )}
+      </ul>
+    </div>,
+    getPortalRoot(),
   ) : null
 
   return (
