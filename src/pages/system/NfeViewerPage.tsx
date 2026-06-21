@@ -749,14 +749,13 @@ export default function NfeViewerPage() {
                   <p className="mt-0.5 text-xs text-slate-500">CFOP sugerido automaticamente (saida convertida para entrada). Ajuste se necessario.</p>
                 </header>
                 <div className="overflow-x-auto">
-                  <table className="min-w-[760px] w-full text-sm">
+                  <table className="min-w-[640px] w-full text-sm">
                     <thead className="bg-slate-50 text-left text-xs text-slate-500">
                       <tr>
                         <th className="px-3 py-2">Item</th>
                         <th className="px-3 py-2">Qtd.</th>
                         <th className="px-3 py-2">Total</th>
-                        <th className="px-3 py-2">Produto</th>
-                        <th className="px-3 py-2">CFOP entrada</th>
+                        <th className="px-3 py-2 w-full">Produto / CFOP entrada</th>
                         <th className="px-3 py-2"></th>
                       </tr>
                     </thead>
@@ -769,29 +768,29 @@ export default function NfeViewerPage() {
                           </td>
                           <td className="px-3 py-3 tabular-nums">{item.quantity}</td>
                           <td className="px-3 py-3 tabular-nums">{formatCurrency(item.total)}</td>
-                          <td className="px-3 py-2">
-                            <Combobox
-                              value={mappings[item.number]?.productId ?? ''}
-                              onChange={(id) => updateMapping(item.number, 'productId', id)}
-                              options={products.map((p) => ({
-                                id: String(value(p, 'id_produto') ?? ''),
-                                label: String(value(p, 'nome_produto') || value(p, 'descricao_produto') || ''),
-                              }))}
-                              placeholder="Buscar produto..."
-                            />
+                          <td className="px-3 py-2 w-full">
+                            <div className="flex flex-col gap-1.5">
+                              <Combobox
+                                value={mappings[item.number]?.productId ?? ''}
+                                onChange={(id) => updateMapping(item.number, 'productId', id)}
+                                options={products.map((p) => ({
+                                  id: String(value(p, 'id_produto') ?? ''),
+                                  label: String(value(p, 'nome_produto') || value(p, 'descricao_produto') || ''),
+                                }))}
+                                placeholder="Buscar produto..."
+                              />
+                              <Combobox
+                                value={mappings[item.number]?.cfopId ?? ''}
+                                onChange={(id) => updateMapping(item.number, 'cfopId', id)}
+                                options={cfops.map((c) => ({
+                                  id: String(value(c, 'id_cfop') ?? ''),
+                                  label: `${value(c, 'cfop') || value(c, 'cd_cfop')} — ${value(c, 'ds_cfop')}`,
+                                }))}
+                                placeholder="Buscar CFOP..."
+                              />
+                            </div>
                           </td>
-                          <td className="px-3 py-2">
-                            <Combobox
-                              value={mappings[item.number]?.cfopId ?? ''}
-                              onChange={(id) => updateMapping(item.number, 'cfopId', id)}
-                              options={cfops.map((c) => ({
-                                id: String(value(c, 'id_cfop') ?? ''),
-                                label: `${value(c, 'cfop') || value(c, 'cd_cfop')} — ${value(c, 'ds_cfop')}`,
-                              }))}
-                              placeholder="Buscar CFOP..."
-                            />
-                          </td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 whitespace-nowrap">
                             <button
                               type="button"
                               onClick={() => setImpostosItem(item)}
