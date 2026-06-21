@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import ReactDOM from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import { entityApi } from '@/api/entity.api'
@@ -1333,6 +1334,7 @@ function Combobox({ value, onChange, options, placeholder }: {
 }) {
   const [query, setQuery] = React.useState('')
   const [open, setOpen] = React.useState(false)
+  const [rect, setRect] = React.useState<DOMRect | null>(null)
   const containerRef = React.useRef<HTMLDivElement>(null)
 
   const selectedLabel = options.find((o) => o.id === value)?.label ?? ''
@@ -1340,23 +1342,51 @@ function Combobox({ value, onChange, options, placeholder }: {
     ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase()))
     : options
 
+  const openDropdown = () => {
+    if (containerRef.current) setRect(containerRef.current.getBoundingClientRect())
+    setOpen(true)
+    setQuery('')
+  }
+
   React.useEffect(() => {
     if (!open) return
-    const handler = (e: MouseEvent) => {
+    const close = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false)
         setQuery('')
       }
     }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
   }, [open])
+
+  const dropdown = open && rect ? (
+    <ul
+      style={{ position: 'fixed', top: rect.bottom + 2, left: rect.left, width: Math.max(rect.width, 240), zIndex: 9999 }}
+      className="max-h-52 overflow-y-auto rounded-md border border-slate-200 bg-white shadow-lg text-xs"
+    >
+      {filtered.length === 0 ? (
+        <li className="px-3 py-2 text-slate-400">Nenhum resultado</li>
+      ) : (
+        filtered.slice(0, 100).map((o) => (
+          <li
+            key={o.id}
+            className={`cursor-pointer px-3 py-2 hover:bg-blue-50 ${o.id === value ? 'bg-blue-50 font-medium text-blue-700' : 'text-slate-700'}`}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => { onChange(o.id); setOpen(false); setQuery('') }}
+          >
+            {o.label}
+          </li>
+        ))
+      )}
+    </ul>
+  ) : null
 
   return (
     <div ref={containerRef} className="relative min-w-44">
       <div
         className="flex h-9 w-full items-center rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 cursor-text"
-        onClick={() => { setOpen(true); setQuery('') }}
+        onClick={openDropdown}
       >
         {open ? (
           <input
@@ -1382,24 +1412,9 @@ function Combobox({ value, onChange, options, placeholder }: {
         <i className="bi bi-chevron-down ml-1 shrink-0 text-slate-400" aria-hidden />
       </div>
 
-      {open && (
-        <ul className="absolute z-30 mt-1 max-h-52 w-full min-w-[240px] overflow-y-auto rounded-md border border-slate-200 bg-white shadow-lg text-xs">
-          {filtered.length === 0 ? (
-            <li className="px-3 py-2 text-slate-400">Nenhum resultado</li>
-          ) : (
-            filtered.slice(0, 100).map((o) => (
-              <li
-                key={o.id}
-                className={`cursor-pointer px-3 py-2 hover:bg-blue-50 ${o.id === value ? 'bg-blue-50 font-medium text-blue-700' : 'text-slate-700'}`}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { onChange(o.id); setOpen(false); setQuery('') }}
-              >
-                {o.label}
-              </li>
-            ))
-          )}
-        </ul>
-      )}
+      {typeof document !== 'undefined' && dropdown
+        ? ReactDOM.createPortal(dropdown, document.body)
+        : null}
     </div>
   )
 }
