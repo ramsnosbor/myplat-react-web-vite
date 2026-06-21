@@ -1326,6 +1326,8 @@ function errMsg(err: unknown): string {
   return (err as any)?.response?.data?.messageError ?? (err as any)?.response?.data?.message ?? (err instanceof Error ? err.message : 'Erro desconhecido')
 }
 
+const DROPDOWN_MAX_H = 220
+
 function Combobox({ value, onChange, options, placeholder }: {
   value: string
   onChange: (id: string) => void
@@ -1334,7 +1336,7 @@ function Combobox({ value, onChange, options, placeholder }: {
 }) {
   const [query, setQuery] = React.useState('')
   const [open, setOpen] = React.useState(false)
-  const [rect, setRect] = React.useState<DOMRect | null>(null)
+  const [pos, setPos] = React.useState<{ top: number; left: number; width: number; above: boolean } | null>(null)
   const containerRef = React.useRef<HTMLDivElement>(null)
 
   const selectedLabel = options.find((o) => o.id === value)?.label ?? ''
@@ -1342,28 +1344,44 @@ function Combobox({ value, onChange, options, placeholder }: {
     ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase()))
     : options
 
+  const close = React.useCallback(() => { setOpen(false); setQuery('') }, [])
+
   const openDropdown = () => {
-    if (containerRef.current) setRect(containerRef.current.getBoundingClientRect())
+    const el = containerRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const spaceBelow = window.innerHeight - r.bottom
+    const above = spaceBelow < DROPDOWN_MAX_H + 8 && r.top > DROPDOWN_MAX_H
+    setPos({ top: above ? r.top : r.bottom + 2, left: r.left, width: Math.max(r.width, 240), above })
     setOpen(true)
     setQuery('')
   }
 
   React.useEffect(() => {
     if (!open) return
-    const close = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false)
-        setQuery('')
-      }
+    const onDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) close()
     }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [open])
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('scroll', close, true)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('scroll', close, true)
+    }
+  }, [open, close])
 
-  const dropdown = open && rect ? (
+  const dropdown = open && pos ? ReactDOM.createPortal(
     <ul
-      style={{ position: 'fixed', top: rect.bottom + 2, left: rect.left, width: Math.max(rect.width, 240), zIndex: 9999 }}
-      className="max-h-52 overflow-y-auto rounded-md border border-slate-200 bg-white shadow-lg text-xs"
+      style={{
+        position: 'fixed',
+        top: pos.above ? undefined : pos.top,
+        bottom: pos.above ? window.innerHeight - pos.top : undefined,
+        left: pos.left,
+        width: pos.width,
+        maxHeight: DROPDOWN_MAX_H,
+        zIndex: 9999,
+      }}
+      className="overflow-y-auto rounded-md border border-slate-200 bg-white shadow-xl text-xs"
     >
       {filtered.length === 0 ? (
         <li className="px-3 py-2 text-slate-400">Nenhum resultado</li>
@@ -1373,13 +1391,14 @@ function Combobox({ value, onChange, options, placeholder }: {
             key={o.id}
             className={`cursor-pointer px-3 py-2 hover:bg-blue-50 ${o.id === value ? 'bg-blue-50 font-medium text-blue-700' : 'text-slate-700'}`}
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => { onChange(o.id); setOpen(false); setQuery('') }}
+            onClick={() => { onChange(o.id); close() }}
           >
             {o.label}
           </li>
         ))
       )}
-    </ul>
+    </ul>,
+    document.body,
   ) : null
 
   return (
@@ -1396,12 +1415,8 @@ function Combobox({ value, onChange, options, placeholder }: {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Escape') { setOpen(false); setQuery('') }
-              if (e.key === 'Enter' && filtered.length > 0) {
-                onChange(filtered[0].id)
-                setOpen(false)
-                setQuery('')
-              }
+              if (e.key === 'Escape') close()
+              if (e.key === 'Enter' && filtered.length > 0) { onChange(filtered[0].id); close() }
             }}
           />
         ) : (
@@ -1409,12 +1424,10 @@ function Combobox({ value, onChange, options, placeholder }: {
             {selectedLabel || placeholder || 'Selecione'}
           </span>
         )}
-        <i className="bi bi-chevron-down ml-1 shrink-0 text-slate-400" aria-hidden />
+        <i className={`bi bi-chevron-${open ? 'up' : 'down'} ml-1 shrink-0 text-slate-400`} aria-hidden />
       </div>
 
-      {typeof document !== 'undefined' && dropdown
-        ? ReactDOM.createPortal(dropdown, document.body)
-        : null}
+      {dropdown}
     </div>
   )
 }
