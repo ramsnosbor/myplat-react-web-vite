@@ -1,6 +1,7 @@
 import { useParams, useLocation } from 'react-router-dom'
 import { ViewRenderer } from '@/components/renderer/ViewRenderer'
 import { AppShell } from '@/components/layout/AppShell'
+import { PopupNavigationProvider } from '@/contexts/PopupNavigationContext'
 
 export default function MainPage() {
   const { screen } = useParams<{ screen?: string }>()
@@ -24,23 +25,27 @@ export default function MainPage() {
 
   if (hideMenu) {
     return (
-      <main className="min-h-screen bg-background">
+      <PopupNavigationProvider>
+        <main className="min-h-screen bg-background">
+          <ViewRenderer
+            key={`${screenName}-${JSON.stringify(initialParams ?? {})}`}
+            screenName={screenName}
+            initialParams={initialParams}
+          />
+        </main>
+      </PopupNavigationProvider>
+    )
+  }
+
+  return (
+    <PopupNavigationProvider>
+      <AppShell title={screenName !== 'home' ? screenName : 'Inicio'}>
         <ViewRenderer
           key={`${screenName}-${JSON.stringify(initialParams ?? {})}`}
           screenName={screenName}
           initialParams={initialParams}
         />
-      </main>
-    )
-  }
-
-  return (
-    <AppShell title={screenName !== 'home' ? screenName : 'Inicio'}>
-      <ViewRenderer
-        key={`${screenName}-${JSON.stringify(initialParams ?? {})}`}
-        screenName={screenName}
-        initialParams={initialParams}
-      />
-    </AppShell>
+      </AppShell>
+    </PopupNavigationProvider>
   )
 }

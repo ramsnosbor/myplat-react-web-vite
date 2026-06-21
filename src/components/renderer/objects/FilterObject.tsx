@@ -8,6 +8,7 @@ import { resolveColClass } from '@/utils/colClass'
 import type { ObjectDefinition, ComponentType } from '@/types/view.types'
 import { interpolate } from '@/utils/interpolate'
 import { storePendingUpload } from '@/utils/pendingUpload'
+import { usePopupNavigation } from '@/contexts/PopupNavigationContext'
 
 interface Props {
   objectDef: ObjectDefinition
@@ -33,6 +34,7 @@ export function FilterObject({ objectDef }: Props) {
   const { viewStore, connections, definition, initialParams } = useViewContext()
   const setObjectState = useStore(viewStore, (s) => s.setObjectState)
   const navigate = useNavigate()
+  const popupNav = usePopupNavigation()
 
   const ctx = (initialParams ?? {}) as Record<string, unknown>
 
@@ -127,12 +129,14 @@ export function FilterObject({ objectDef }: Props) {
   function handleCreate(e: React.MouseEvent) {
     e.stopPropagation() // não abre/fecha o collapse ao clicar em Novo
     if (objectDef.createUrl) {
-      // Interpola {{campo}} usando os valores do formulário + initialParams (querystring)
       const values = { ...ctx, ...form.getValues() } as Record<string, unknown>
       const resolvedUrl = interpolate(objectDef.createUrl, values)
-      navigate(`/home/${resolvedUrl}`)
+      if (objectDef.newFormShowPopup && popupNav) {
+        popupNav.openPopup(resolvedUrl)
+      } else {
+        navigate(`/home/${resolvedUrl}`)
+      }
     }
-    // createObject (modal) → implementar quando houver suporte a modais
   }
 
   // ── uploadNavigate ────────────────────────────────────────────────────────
