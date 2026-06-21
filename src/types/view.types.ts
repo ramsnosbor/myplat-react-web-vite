@@ -253,10 +253,12 @@ export interface SubmitAction {
 }
 
 export interface CrudAction {
-  name: string
+  name?: string
+  title?: string
   action: string
   icon?: string
   variant?: string
+  accept?: string
   size?: string
   visibleOn?: string[]
   visible?: string | boolean

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { useStore } from 'zustand'
 import { useNavigate } from 'react-router-dom'
@@ -7,6 +7,7 @@ import { FieldRenderer } from '../fields/FieldRenderer'
 import { resolveColClass } from '@/utils/colClass'
 import type { ObjectDefinition, ComponentType } from '@/types/view.types'
 import { interpolate } from '@/utils/interpolate'
+import { storePendingUpload } from '@/utils/pendingUpload'
 
 interface Props {
   objectDef: ObjectDefinition
@@ -133,6 +134,29 @@ export function FilterObject({ objectDef }: Props) {
     }
     // createObject (modal) → implementar quando houver suporte a modais
   }
+
+  // ── uploadNavigate ────────────────────────────────────────────────────────
+  const uploadInputRef = useRef<HTMLInputElement>(null)
+  const [uploadAction, setUploadAction] = useState<{ url: string; accept?: string } | null>(null)
+
+  const handleUploadNavigate = useCallback((url: string, accept?: string) => {
+    setUploadAction({ url, accept })
+    requestAnimationFrame(() => uploadInputRef.current?.click())
+  }, [])
+
+  function handleUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file || !uploadAction) return
+    storePendingUpload(file)
+    navigate(uploadAction.url)
+    e.target.value = ''
+  }
+
+  const crudActions = (objectDef.crudActions ?? []).filter((a) => {
+    if (!a.visible) return true
+    const vals = { ...ctx, ...form.getValues() } as Record<string, unknown>
+    return interpolate(a.visible, vals) !== 'false'
+  })
 
   const components = (objectDef.components ?? []).filter((c) => c.type !== 'generalActions')
 
@@ -270,10 +294,35 @@ export function FilterObject({ objectDef }: Props) {
                   {objectDef.createButtonName ?? 'Novo'}
                 </button>
               )}
+
+              {/* crudActions (ex: uploadNavigate) */}
+              {crudActions.map((a, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => {
+                    if (a.action === 'uploadNavigate' || a.action === 'openUpload') {
+                      handleUploadNavigate(a.url ?? '/', a.accept)
+                    }
+                  }}
+                  className={`flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${variantClass(a.variant ?? 'outline')}`}
+                >
+                  {a.icon && <i className={`${a.icon} text-xs`} />}
+                  {a.title ?? 'Ação'}
+                </button>
+              ))}
             </div>
           )}
         </form>
       )}
+
+      <input
+        ref={uploadInputRef}
+        type="file"
+        accept={uploadAction?.accept}
+        className="hidden"
+        onChange={handleUploadFile}
+      />
     </div>
   )
 }
