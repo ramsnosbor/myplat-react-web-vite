@@ -749,13 +749,20 @@ export default function NfeViewerPage() {
                   <p className="mt-0.5 text-xs text-slate-500">CFOP sugerido automaticamente (saida convertida para entrada). Ajuste se necessario.</p>
                 </header>
                 <div className="overflow-x-auto">
-                  <table className="min-w-[640px] w-full text-sm">
+                  <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
+                    <colgroup>
+                      <col style={{ width: '30%' }} />
+                      <col style={{ width: '60px' }} />
+                      <col style={{ width: '90px' }} />
+                      <col />
+                      <col style={{ width: '90px' }} />
+                    </colgroup>
                     <thead className="bg-slate-50 text-left text-xs text-slate-500">
                       <tr>
                         <th className="px-3 py-2">Item</th>
                         <th className="px-3 py-2">Qtd.</th>
                         <th className="px-3 py-2">Total</th>
-                        <th className="px-3 py-2 w-full">Produto / CFOP entrada</th>
+                        <th className="px-3 py-2">Produto / CFOP entrada</th>
                         <th className="px-3 py-2"></th>
                       </tr>
                     </thead>
@@ -768,7 +775,7 @@ export default function NfeViewerPage() {
                           </td>
                           <td className="px-3 py-3 tabular-nums">{item.quantity}</td>
                           <td className="px-3 py-3 tabular-nums">{formatCurrency(item.total)}</td>
-                          <td className="px-3 py-2 w-full">
+                          <td className="px-3 py-2">
                             <div className="flex flex-col gap-1.5">
                               <Combobox
                                 value={mappings[item.number]?.productId ?? ''}
@@ -790,7 +797,7 @@ export default function NfeViewerPage() {
                               />
                             </div>
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap">
+                          <td className="px-3 py-2 text-center">
                             <button
                               type="button"
                               onClick={() => setImpostosItem(item)}
@@ -1379,6 +1386,8 @@ function Combobox({ value, onChange, options, placeholder }: {
     }
   }, [open, close])
 
+  const select = (id: string) => { onChange(id); close() }
+
   const dropdown = open && pos ? ReactDOM.createPortal(
     <div style={{ position: 'absolute', top: pos.above ? undefined : pos.top, bottom: pos.above ? window.innerHeight - pos.top : undefined, left: pos.left, width: pos.width, pointerEvents: 'auto' }}>
       <ul style={{ maxHeight: DROPDOWN_MAX_H }} className="overflow-y-auto rounded-md border border-slate-200 bg-white shadow-xl text-xs">
@@ -1389,8 +1398,13 @@ function Combobox({ value, onChange, options, placeholder }: {
             <li
               key={o.id}
               className={`cursor-pointer px-3 py-2 hover:bg-blue-50 ${o.id === value ? 'bg-blue-50 font-medium text-blue-700' : 'text-slate-700'}`}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => { onChange(o.id); close() }}
+              onMouseDown={(e) => {
+                // stopImmediatePropagation impede o listener de mousedown no document de fechar
+                // o dropdown antes que a seleção seja registrada
+                e.preventDefault()
+                e.nativeEvent.stopImmediatePropagation()
+                select(o.id)
+              }}
             >
               {o.label}
             </li>
@@ -1402,7 +1416,7 @@ function Combobox({ value, onChange, options, placeholder }: {
   ) : null
 
   return (
-    <div ref={containerRef} className="relative min-w-44">
+    <div ref={containerRef} className="relative w-full">
       <div
         className="flex h-9 w-full items-center rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 cursor-text"
         onClick={openDropdown}
