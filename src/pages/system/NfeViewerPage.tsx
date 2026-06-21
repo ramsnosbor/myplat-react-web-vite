@@ -116,6 +116,7 @@ export default function NfeViewerPage() {
   const [selectedSeriesId, setSelectedSeriesId] = useState('')
   const [mappings, setMappings] = useState<Record<string, Mapping>>({})
   const [issuerFound, setIssuerFound] = useState<boolean | null>(null)
+  const [issuerIsFilial, setIssuerIsFilial] = useState(false)
   const [impostosItem, setImpostosItem] = useState<NfeItem | null>(null)
   const [issuerExtra, setIssuerExtra] = useState<IssuerExtra>({
     email: '', emailNfe: '', nomeContato: '',
@@ -176,6 +177,7 @@ export default function NfeViewerPage() {
         // Se emitente já existe, pré-preenche os campos extras com dados do banco
         const issuerPerson = entityRows(issuerResult)[0]
         setIssuerFound(!!issuerPerson)
+        setIssuerIsFilial(value(issuerPerson, 'fl_empresa_filial') === 'Sim')
         if (issuerPerson) {
           setIssuerExtra({
             email: value(issuerPerson, 'email'),
@@ -665,6 +667,17 @@ export default function NfeViewerPage() {
                     </p>
                   </div>
                 </div>
+
+                {/* Alerta fl_empresa_filial */}
+                {issuerFound === true && !issuerIsFilial && (
+                  <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    <i className="bi bi-exclamation-triangle-fill mt-0.5 shrink-0 text-amber-500" aria-hidden />
+                    <span>
+                      O fornecedor <strong>{draft.issuer.name}</strong> nao esta marcado como <strong>Empresa Filial</strong> (fl_empresa_filial ≠ Sim).
+                      Verifique o cadastro antes de importar.
+                    </span>
+                  </div>
+                )}
 
                 {/* Dados do XML — somente leitura */}
                 {issuerFound !== null && (
