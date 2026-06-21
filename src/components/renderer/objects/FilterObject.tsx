@@ -152,10 +152,11 @@ export function FilterObject({ objectDef }: Props) {
     e.target.value = ''
   }
 
+  const crudActionsCtx = { ...ctx, ...form.getValues() } as Record<string, unknown>
   const crudActions = (objectDef.crudActions ?? []).filter((a) => {
-    if (!a.visible) return true
-    const vals = { ...ctx, ...form.getValues() } as Record<string, unknown>
-    return interpolate(a.visible, vals) !== 'false'
+    if (a.visible === undefined || a.visible === true) return true
+    if (a.visible === false) return false
+    return interpolate(String(a.visible), crudActionsCtx) !== 'false'
   })
 
   const components = (objectDef.components ?? []).filter((c) => c.type !== 'generalActions')
