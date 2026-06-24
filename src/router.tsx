@@ -20,6 +20,7 @@ const UserPermissionsPage = lazy(() => import('@/pages/system/UserPermissionsPag
 const PerfisAcessoPage = lazy(() => import('@/pages/system/PerfisAcessoPage'))
 const PerfisAcessoFormPage = lazy(() => import('@/pages/system/PerfisAcessoFormPage'))
 const UsuarioPerfisPage = lazy(() => import('@/pages/system/UsuarioPerfisPage'))
+const PapeisPage = lazy(() => import('@/pages/system/PapeisPage'))
 const UsuarioClientePage = lazy(() => import('@/pages/system/UsuarioClientePage'))
 const UsuarioClienteFormPage = lazy(() => import('@/pages/system/UsuarioClienteFormPage'))
 const TemplatePage = lazy(() => import('@/pages/system/TemplatePage'))
@@ -31,6 +32,7 @@ const ReportViewerPage = lazy(() => import('@/pages/system/ReportViewerPage'))
 const ReportsListPage = lazy(() => import('@/pages/system/ReportsListPage'))
 const InsightsPage = lazy(() => import('@/pages/system/InsightsPage'))
 const NfeViewerPage = lazy(() => import('@/pages/system/NfeViewerPage'))
+const TabelasPage   = lazy(() => import('@/pages/system/TabelasPage'))
 
 // ─── Loading fallback ─────────────────────────────────────────────────────────
 
@@ -199,6 +201,7 @@ const CLIENT_BLOCKED_PATHS = new Set([
   '/perfis-acesso',
   '/perfis-acesso/form',
   '/usuario-perfis',
+  '/papeis',
   '/usuario-cliente',
   '/usuario-cliente/form',
   '/template',
@@ -273,6 +276,7 @@ export function AppRouter() {
               <Route path="/perfis-acesso" element={<PerfisAcessoPage />} />
               <Route path="/perfis-acesso/form" element={<PerfisAcessoFormPage />} />
               <Route path="/usuario-perfis" element={<UsuarioPerfisPage />} />
+              <Route path="/papeis" element={<PapeisPage />} />
               <Route path="/usuario-cliente" element={<UsuarioClientePage />} />
               <Route path="/usuario-cliente/form" element={<UsuarioClienteFormPage />} />
               <Route path="/template" element={<TemplatePage />} />
@@ -287,6 +291,7 @@ export function AppRouter() {
               <Route path="/reports" element={<ReportsListPage />} />
               <Route path="/insights" element={<InsightsPage />} />
               <Route path="/nfe-viewer" element={<NfeViewerPage />} />
+              <Route path="/tabelas"   element={<TabelasPage />} />
               <Route path="/report-viewer" element={<ReportViewerPage />} />
             </Route>
           </Route>
