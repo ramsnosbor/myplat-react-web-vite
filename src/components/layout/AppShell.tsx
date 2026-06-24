@@ -379,11 +379,13 @@ function SettingsMenu({ onNavigate }: { onNavigate: (path: string) => void }) {
     <div className="absolute right-10 top-11 z-50 w-72 overflow-hidden rounded-md border border-blue-100 bg-white shadow-xl shadow-blue-950/15">
       <MenuSection icon="bi bi-stars" title="Centro de Criacao" />
       <MenuItem icon="bi bi-sliders" label="Tags - Parametros" onClick={() => onNavigate('/parameterConfig')} />
+      <MenuItem icon="bi bi-table" label="Tabelas" onClick={() => onNavigate('/tabelas')} />
       <div className="my-1 h-px bg-slate-100" />
       <MenuSection icon="bi bi-shield-lock" title="Usuarios" />
       <MenuItem icon="bi bi-people" label="Lista de Usuarios" onClick={() => onNavigate('/usuarioList')} />
       <MenuItem icon="bi bi-shield-check" label="Perfis de Acesso" onClick={() => onNavigate('/perfis-acesso')} />
       <MenuItem icon="bi bi-person-lock" label="Usuarios e Perfis" onClick={() => onNavigate('/usuario-perfis')} />
+      <MenuItem icon="bi bi-person-badge" label="Papeis e Usuarios" onClick={() => onNavigate('/papeis')} />
       <MenuItem icon="bi bi-person-badge" label="Usuarios Cliente" onClick={() => onNavigate('/usuario-cliente')} />
       <div className="my-1 h-px bg-slate-100" />
       <MenuSection icon="bi bi-bell" title="Mensagens" />
