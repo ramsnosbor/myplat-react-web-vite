@@ -46,7 +46,7 @@ export function AppShell({ title, subtitle, children }: AppShellProps) {
 
   const notificationsQuery = useQuery({
     queryKey: ['notifications-list', tenant?.code],
-    queryFn: () => notificationApi.getList({ limit: 8, unreadOnly: false }),
+    queryFn: () => notificationApi.getList({ limit: 8, unreadOnly: true }),
     enabled: notificationsOpen && !!tenant?.code,
     staleTime: 10_000,
   })
