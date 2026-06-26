@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { UseFormSetValue, UseFormGetValues } from 'react-hook-form'
 import type { ComponentDefinition } from '@/types/view.types'
 import { entityApi } from '@/api/entity.api'
+import { notificationApi } from '@/api/notification.api'
 import { useViewContext } from '../ViewContext'
 import { useAuthStore } from '@/store/authStore'
 import { nowBRT } from '@/utils/dateUtils'
@@ -33,6 +34,8 @@ interface WorkflowRow {
   ds_confirmacao: string | null
   id_status_aprovado: number | null
   id_status_rejeitado: number | null
+  id_perfil_aprovador: number | null
+  id_papel_responsavel_destino: number | null
 }
 
 interface WorkflowStatusFieldProps {
@@ -47,7 +50,7 @@ function Badge({ label, cor, icone }: { label: string; cor?: string | null; icon
   return (
     <span
       className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold text-white"
-      style={{ backgroundColor: cor ?? '#6366f1' }}
+      style={{ backgroundColor: cor || '#6366f1' }}
     >
       {icone && <i className={icone} aria-hidden />}
       {label}
@@ -215,6 +218,9 @@ export function WorkflowStatusField({
             ds_situacao: 'Pendente',
             id_status_aprovado: row.id_status_aprovado != null ? String(row.id_status_aprovado) : null,
             id_status_reprovado: row.id_status_rejeitado != null ? String(row.id_status_rejeitado) : null,
+            id_responsavel_perfil: (row.id_perfil_aprovador ?? row.id_papel_responsavel_destino) != null
+              ? String(row.id_perfil_aprovador ?? row.id_papel_responsavel_destino)
+              : null,
             nm_campo_pk: chavePrimaria,
             nm_campo_status: statusField,
           },
@@ -222,7 +228,13 @@ export function WorkflowStatusField({
       }
 
       await entityApi.many(payload)
-      return { newStatusId: row.id_status_destino, rota: row.nm_rota_destino, pk: String(currentPk) }
+      return {
+        newStatusId: row.id_status_destino,
+        rota: row.nm_rota_destino,
+        pk: String(currentPk),
+        idPapelResponsavel: row.id_papel_responsavel_destino,
+        textoNotificacao: `${dsTituloAprovacao || entidadeProcesso}: ${row.nm_status_destino ?? row.nm_transicao ?? 'status atualizado'}`,
+      }
     },
     onSuccess: (result) => {
       if (!result) return
@@ -231,6 +243,9 @@ export function WorkflowStatusField({
       queryClient.invalidateQueries({ queryKey: ['entity-single'] })
       queryClient.invalidateQueries({ queryKey: ['workflow-status'] })
       setPendingTransition(null)
+      if (result.idPapelResponsavel != null) {
+        notificationApi.notifyRole(result.idPapelResponsavel, result.textoNotificacao!).catch(() => {})
+      }
       if (result.rota && result.pk) navigate(`/${result.rota}/${result.pk}`)
     },
   })
@@ -280,37 +295,31 @@ export function WorkflowStatusField({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex items-center gap-3 flex-wrap">
 
       {/* Badge do status atual */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-sm text-muted-foreground font-medium">Status:</span>
-        <Badge label={statusInfo.nm_status} cor={statusInfo.ds_cor} icone={statusInfo.ds_icone ?? undefined} />
-        {statusInfo.fl_estado_final === 'Sim' && (
-          <span className="text-xs text-muted-foreground">(status final)</span>
-        )}
-      </div>
+      <span className="text-sm text-muted-foreground font-medium">Status:</span>
+      <Badge label={statusInfo.nm_status} cor={statusInfo.ds_cor} icone={statusInfo.ds_icone ?? undefined} />
+      {statusInfo.fl_estado_final === 'Sim' && (
+        <span className="text-xs text-muted-foreground">(status final)</span>
+      )}
 
-      {/* Botões de transição */}
-      {transitions.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {transitions.map((row) => (
+      {/* Botões de transição inline */}
+      {transitions.length > 0 && transitions.map((row) => (
             <button
               key={row.id_transicao}
               type="button"
               disabled={transitionMutation.isPending}
               onClick={() => handleTransitionClick(row)}
               className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-              style={{ backgroundColor: row.ds_cor_destino ?? '#6366f1' }}
+              style={{ backgroundColor: row.ds_cor_destino || '#6366f1' }}
             >
               {row.fl_requer_aprovacao === 'Sim' && (
                 <i className="bi bi-lock-fill text-xs" aria-hidden />
               )}
               {row.nm_transicao ?? row.nm_status_destino}
             </button>
-          ))}
-        </div>
-      )}
+      ))}
 
       {/* Modal de confirmação / comentário */}
       {pendingTransition && (

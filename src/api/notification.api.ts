@@ -66,4 +66,8 @@ export const notificationApi = {
   markAllAsRead(): Promise<void> {
     return apiClient.patch('/api/notifications/read-all').then(() => undefined)
   },
+
+  notifyRole(idPapel: number, texto: string): Promise<void> {
+    return apiClient.post('/api/notifications/workflow', { idPapel, texto }).then(() => undefined)
+  },
 }
