@@ -72,7 +72,6 @@ export function AppShell({ title, subtitle, children }: AppShellProps) {
       if (!menuRef.current?.contains(event.target as Node)) {
         setSettingsOpen(false)
         setUserMenuOpen(false)
-        setNotificationsOpen(false)
       }
       if (!menuSearchRef.current?.contains(event.target as Node)) {
         setMenuSearchOpen(false)
