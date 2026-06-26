@@ -70,6 +70,17 @@ function PopupStack() {
 }
 
 // ─── PopupModal ───────────────────────────────────────────────────────────────
+// Usa iframe para isolar o histórico de navegação da tela principal.
+// "Voltar" dentro do popup afeta só o iframe, não a rota mãe.
+
+function buildPopupUrl(screen: string, params?: Record<string, unknown>): string {
+  const base = `${window.location.origin}/home/${screen}?hideMenu=true`
+  if (!params || Object.keys(params).length === 0) return base
+  const qs = Object.entries(params)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+    .join('&')
+  return `${base}&${qs}`
+}
 
 function PopupModal({
   popup,
@@ -81,6 +92,7 @@ function PopupModal({
   isTop: boolean
 }) {
   const backdropRef = useRef<HTMLDivElement>(null)
+  const iframeSrc = buildPopupUrl(popup.screen, popup.initialParams)
 
   function handleBackdropClick(e: React.MouseEvent) {
     if (e.target === backdropRef.current) onClose()
@@ -111,13 +123,12 @@ function PopupModal({
           </button>
         </div>
 
-        <div className="flex-1 overflow-auto">
-          <ViewRenderer
-            key={`popup-${popup.screen}-${JSON.stringify(popup.initialParams ?? {})}`}
-            screenName={popup.screen}
-            initialParams={popup.initialParams}
-          />
-        </div>
+        <iframe
+          src={iframeSrc}
+          title={popup.screen}
+          className="flex-1 w-full border-0"
+          style={{ minHeight: 0 }}
+        />
       </div>
     </div>,
     document.body,

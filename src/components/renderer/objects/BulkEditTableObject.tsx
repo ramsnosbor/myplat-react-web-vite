@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from 'zustand'
 import { useQueryClient } from '@tanstack/react-query'
@@ -8,7 +9,7 @@ import { useConnectionParams, useConnectionEnabled } from '../ObjectRenderer'
 import { entityApi } from '@/api/entity.api'
 import { scriptApi } from '@/api/script.api'
 import { useToast } from '@/components/ui/Toast'
-import { evalExpr } from '@/utils/evalExpr'
+import { evalExpr, resolveTemplate } from '@/utils/evalExpr'
 import { resolveColClass } from '@/utils/colClass'
 import type { ObjectDefinition, ComponentDefinition, SubmitAction, ComponentAction } from '@/types/view.types'
 import type { EntityRecord } from '@/types/entity.types'
@@ -27,9 +28,10 @@ interface EditableCellProps {
   fieldName: string
   disabled?: boolean
   onCommit: (rowIndex: number, field: string, value: unknown) => void
+  onCommitMany: (rowIndex: number, fields: Record<string, unknown>) => void
 }
 
-function EditableCell({ col, initialValue, rowIndex, fieldName, disabled, onCommit }: EditableCellProps) {
+function EditableCell({ col, initialValue, rowIndex, fieldName, disabled, onCommit, onCommitMany }: EditableCellProps) {
   const [local, setLocal] = useState<unknown>(initialValue ?? '')
   const [focused, setFocused] = useState(false)
 
@@ -72,6 +74,19 @@ function EditableCell({ col, initialValue, rowIndex, fieldName, disabled, onComm
         <option value="">--</option>
         {col.options.map((o, i) => <option key={i} value={o.value}>{o.text}</option>)}
       </select>
+    )
+  }
+
+  if (col.type === 'autocomplete') {
+    return (
+      <AutocompleteInput
+        col={col}
+        initialValue={initialValue}
+        rowIndex={rowIndex}
+        fieldName={fieldName}
+        disabled={disabled}
+        onCommitMany={onCommitMany}
+      />
     )
   }
 
@@ -134,6 +149,121 @@ function formatStatic(value: unknown, col: ComponentDefinition): string {
   return String(value)
 }
 
+
+function evalComputed(formula: string, rowData: Record<string, unknown>): number | null {
+  try {
+    const expr = formula.replace(/\{\{(\w+)\}\}/g, (_, key) => {
+      const v = rowData[key]
+      return String(parseFloat(String(v ?? 0)) || 0)
+    })
+    // eslint-disable-next-line no-new-func
+    return Function(`"use strict"; return (${expr})`)() as number
+  } catch {
+    return null
+  }
+}
+
+// ─── AutocompleteInput ────────────────────────────────────────────────────────
+
+interface AutocompleteInputProps {
+  col: ComponentDefinition
+  initialValue: unknown
+  rowIndex: number
+  fieldName: string
+  disabled?: boolean
+  onCommitMany: (rowIndex: number, fields: Record<string, unknown>) => void
+}
+
+function AutocompleteInput({ col, initialValue, rowIndex, fieldName, disabled, onCommitMany }: AutocompleteInputProps) {
+  const [text, setText] = useState(String(initialValue ?? ''))
+  const [options, setOptions] = useState<Record<string, unknown>[]>([])
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const searchField = col.labelField ?? fieldName
+
+  useEffect(() => { setText(String(initialValue ?? '')) }, [initialValue])
+
+  function calcPos() {
+    if (!inputRef.current) return
+    const r = inputRef.current.getBoundingClientRect()
+    setDropdownPos({ top: r.bottom + window.scrollY, left: r.left + window.scrollX, width: r.width })
+  }
+
+  function search(val: string) {
+    if (timerRef.current) clearTimeout(timerRef.current)
+    if (!val || val.length < 2) { setOptions([]); setOpen(false); return }
+    timerRef.current = setTimeout(async () => {
+      setLoading(true)
+      try {
+        const result = await entityApi.getList(col.entity!, { [searchField]: `%${val}%`, pageSize: 20 })
+        const rows = (result as { data?: Record<string, unknown>[] }).data ?? (Array.isArray(result) ? result : [])
+        setOptions(rows as Record<string, unknown>[])
+        calcPos()
+        setOpen(true)
+      } catch {
+        setOptions([])
+      } finally {
+        setLoading(false)
+      }
+    }, 300)
+  }
+
+  function handleSelect(opt: Record<string, unknown>) {
+    const displayVal = opt[searchField]
+    const keyField = col.params?.key
+    const sourceKeyField = col.params?.sourceKey ?? keyField
+    const keyVal = sourceKeyField ? opt[sourceKeyField] : undefined
+
+    setText(String(displayVal ?? ''))
+    setOpen(false)
+    setOptions([])
+
+    const fields: Record<string, unknown> = { [fieldName]: displayVal }
+    if (keyField && keyVal !== undefined) fields[keyField] = keyVal
+    onCommitMany(rowIndex, fields)
+  }
+
+  const cls = 'w-full rounded border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50'
+
+  const dropdown = (open || loading) && dropdownPos
+    ? createPortal(
+        <div
+          style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width, zIndex: 9999 }}
+          className="max-h-48 overflow-auto rounded-md border border-border bg-popover shadow-md"
+        >
+          {loading && <div className="px-3 py-2 text-xs text-muted-foreground">Buscando...</div>}
+          {!loading && options.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground">Sem resultados</div>}
+          {!loading && options.map((opt, i) => (
+            <div key={i} onMouseDown={() => handleSelect(opt)} className="cursor-pointer px-3 py-1.5 text-xs hover:bg-muted">
+              {String(opt[fieldName] ?? '')}
+            </div>
+          ))}
+        </div>,
+        document.body,
+      )
+    : null
+
+  return (
+    <div className="relative">
+      <input
+        ref={inputRef}
+        type="text"
+        disabled={disabled}
+        className={cls}
+        value={text}
+        placeholder={col.placeholder ?? ''}
+        onChange={e => { setText(e.target.value); search(e.target.value) }}
+        onFocus={() => { if (options.length > 0) { calcPos(); setOpen(true) } }}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {dropdown}
+    </div>
+  )
+}
 
 // ─── BulkEditTableObject ──────────────────────────────────────────────────────
 
@@ -208,6 +338,13 @@ export function BulkEditTableObject({ objectDef }: Props) {
     }))
   }, [])
 
+  const handleCommitMany = useCallback((rowIdx: number, fields: Record<string, unknown>) => {
+    setEditedData(prev => ({
+      ...prev,
+      [rowIdx]: { ...(prev[rowIdx] ?? {}), ...fields },
+    }))
+  }, [])
+
   // ─── Add row ───────────────────────────────────────────────────────────────
   const addRowCfg = typeof objectDef.addRowButton === 'object' && objectDef.addRowButton !== null
     ? objectDef.addRowButton as { label?: string; icon?: string; variant?: string; defaults?: Record<string, unknown> }
@@ -251,18 +388,47 @@ export function BulkEditTableObject({ objectDef }: Props) {
 
   // ─── Submit ────────────────────────────────────────────────────────────────
   function buildSubmitRows() {
+    const saveEntity = (objectDef as any).saveEntity ?? objectDef.entity
+    const pk = objectDef.submitActions?.find(a => a.action === 'saveMany')?.primaryKey ?? 'id'
+    const colDefs: ComponentDefinition[] = objectDef.components ?? []
+
+    // Campos permitidos no payload: campos do saveEntity + FK de autocompletes + PK
+    const allowedFields = new Set<string>([pk])
+    for (const col of colDefs) {
+      const f = col.nameForm ?? col.name
+      if (col.entity === saveEntity && f) allowedFields.add(f)
+      if (col.type === 'autocomplete' && col.params?.key) allowedFields.add(col.params.key as string)
+    }
+
+    // Colunas com computedFrom que pertencem ao saveEntity (precisam ser avaliadas antes de salvar)
+    const computedCols = colDefs.filter(col =>
+      col.computedFrom && allowedFields.has(col.nameForm ?? col.name ?? '')
+    )
+
+    function buildRow(serverRow: RowRecord, edits: Record<string, unknown> = {}): RowRecord {
+      const merged = { ...serverRow, ...edits }
+      const result: RowRecord = {}
+      for (const key of allowedFields) {
+        if (key in merged) result[key] = merged[key]
+      }
+      // Sobrescreve campos calculados com o valor avaliado a partir dos dados atuais
+      for (const col of computedCols) {
+        const f = col.nameForm ?? col.name ?? ''
+        result[f] = evalComputed(col.computedFrom!, merged)
+      }
+      return result
+    }
+
     const existing = Array.from(selectedRows)
       .filter(i => i < serverRows.length && !deletedRows.has(i))
-      .map(i => ({ ...serverRows[i], ...(editedData[i] ?? {}) }))
+      .map(i => buildRow(serverRows[i], editedData[i] ?? {}))
 
-    const added = newRows.map((row, offset) => ({
-      ...row,
-      ...(editedData[serverRows.length + offset] ?? {}),
-    }))
+    const added = newRows.map((row, offset) =>
+      buildRow(row, editedData[serverRows.length + offset] ?? {})
+    )
 
     const deleted = Array.from(deletedRows).map(i => ({
-      ...serverRows[i],
-      ...(editedData[i] ?? {}),
+      ...buildRow(serverRows[i], editedData[i] ?? {}),
       _deleted: true,
     }))
 
@@ -575,7 +741,39 @@ export function BulkEditTableObject({ objectDef }: Props) {
                     style={objectDef.panelBodyStyle as React.CSSProperties}>
                     {cols.map((col, ci) => {
                       const field = col.nameForm ?? col.name
-                      const val = editedData[idx]?.[field] ?? row[field]
+                      const mergedRow = { ...row, ...(editedData[idx] ?? {}) }
+                      const val = col.computedFrom
+                        ? evalComputed(col.computedFrom, mergedRow)
+                        : editedData[idx]?.[field] ?? row[field]
+
+                      if (col.type === 'label') {
+                        const template = String(col.nameForm ?? '')
+                        const pad = (n: number) => String(n).padStart(2, '0')
+                        const withDates = template.replace(/\{\{([^,}]+),([^}]+)\}\}/g, (_, field: string, fmt: string) => {
+                          const raw = mergedRow[field.trim()]
+                          if (raw === undefined || raw === null || raw === '') return ''
+                          const d = new Date(String(raw))
+                          if (isNaN(d.getTime())) return String(raw)
+                          return fmt.trim()
+                            .replace('YYYY', String(d.getFullYear()))
+                            .replace('MM',   pad(d.getMonth() + 1))
+                            .replace('DD',   pad(d.getDate()))
+                            .replace('HH',   pad(d.getHours()))
+                            .replace('mm',   pad(d.getMinutes()))
+                        })
+                        const text = withDates.replace(/\{\{(\w+)\}\}/g, (_, key: string) => {
+                          const v = mergedRow[key]
+                          return v !== undefined && v !== null ? String(v) : ''
+                        })
+                        return (
+                          <div key={ci}
+                            className={resolveColClass(col.class ?? col.className ?? 'col-md-12')}
+                            style={col.style as React.CSSProperties}>
+                            <span className="text-xs">{text || '—'}</span>
+                          </div>
+                        )
+                      }
+
                       return (
                         <div key={ci}
                           className={resolveColClass(col.class ?? col.className ?? 'col-md-12')}
@@ -609,7 +807,7 @@ export function BulkEditTableObject({ objectDef }: Props) {
                               <div style={col.valueStyle as React.CSSProperties}>
                                 <EditableCell col={col} initialValue={val} rowIndex={idx}
                                   fieldName={field} disabled={isDeleted || !isSelected}
-                                  onCommit={handleCommit} />
+                                  onCommit={handleCommit} onCommitMany={handleCommitMany} />
                               </div>
                             </>
                           )}
@@ -677,7 +875,10 @@ export function BulkEditTableObject({ objectDef }: Props) {
                     )}
                     {cols.map((col, ci) => {
                       const field = col.nameForm ?? col.name
-                      const val = editedData[idx]?.[field] ?? row[field]
+                      const mergedRow = { ...row, ...(editedData[idx] ?? {}) }
+                      const val = col.computedFrom
+                        ? evalComputed(col.computedFrom, mergedRow)
+                        : editedData[idx]?.[field] ?? row[field]
                       return (
                         <td key={ci} className="px-2 py-1"
                           style={col.style as React.CSSProperties}>
@@ -699,7 +900,7 @@ export function BulkEditTableObject({ objectDef }: Props) {
                             <div style={col.valueStyle as React.CSSProperties}>
                               <EditableCell col={col} initialValue={val} rowIndex={idx}
                                 fieldName={field} disabled={isDeleted || !isSelected}
-                                onCommit={handleCommit} />
+                                onCommit={handleCommit} onCommitMany={handleCommitMany} />
                             </div>
                           )}
                         </td>

@@ -18,6 +18,7 @@ import type { EntityRecord } from '@/types/entity.types'
 import type { ObjectState } from '@/store/viewStore'
 import { storePendingUpload } from '@/utils/pendingUpload'
 import { usePopupNavigation } from '@/contexts/PopupNavigationContext'
+import { useMonitorStore } from '@/store/monitorStore'
 
 interface Props {
   objectDef: ObjectDefinition
@@ -64,6 +65,7 @@ export function CrudObject({ objectDef }: Props) {
 
   const connectionParams = useConnectionParams(objectDef.id)
   const parentIsCreating = useParentIsCreating(objectDef.id)
+  const addMonitor = useMonitorStore((s) => s.add)
 
   // Este crud é filho de uma connection bloqueante? (ex: crudFichaEsperaPrincipal ← crudPessoa)
   // Filhos de conexão têm o seu entityId derivado dos params do pai, que chegam com atraso.
@@ -314,8 +316,10 @@ export function CrudObject({ objectDef }: Props) {
       // Edit/detail: campos iniciam vazios (sem defaultValue), initialParams preservados,
       // valores atuais do form preservados para campos que NÃO vêm da API principal
       // (ex: cd_modelo_documento vem da tabela série via autocomplete fields copy, não do movimento).
+      // connectionParams injetados após form.getValues() para garantir contexto fresco do pai
+      // (ex: fl_residente_exterior propagado via connection, não presente no DB do filho).
       // Os valores do registro (normalizedRecord) sempre ganham dos demais.
-      form.reset({ ...buildDefaultValues(objectDef, initialParams, false), ...initialParams, ...form.getValues(), ...normalizedRecord })
+      form.reset({ ...buildDefaultValues(objectDef, initialParams, false), ...initialParams, ...form.getValues(), ...connectionParams, ...normalizedRecord })
       // Inclui computedOverrides para que campos virtuais (computedName sem nameForm, ex: destinoDaOperacao)
       // não sejam perdidos quando o record do banco sobrescreve o formData. Esses campos não entram
       // em watchedValues (não são registrados no form), então o effect de watchedValues não os restaura
@@ -631,11 +635,27 @@ export function CrudObject({ objectDef }: Props) {
     }),
   ])
 
+  // Chaves de campos numéricos/FK que devem enviar null em vez de "" quando vazios.
+  const numericFieldKeys = new Set(
+    (objectDef.components ?? [])
+      .filter((c) => ['number', 'decimal', 'autocomplete'].includes(c.type))
+      .flatMap((c) => {
+        const keys: string[] = []
+        const k = c.nameForm ?? c.name
+        if (k) keys.push(k)
+        if (c.type === 'autocomplete' && c.params?.key && c.params.key !== k) keys.push(c.params.key)
+        return keys
+      }),
+  )
+
   async function onSubmit(values: Record<string, unknown>) {
     const body = Object.fromEntries(
       Object.entries(values)
         .filter(([key]) => !transientKeys.has(key) && !key.endsWith('__label'))
-        .map(([key, val]) => [key, normalizeDatetimeForDb(val)])
+        .map(([key, val]) => {
+          const v = normalizeDatetimeForDb(val)
+          return [key, v === '' && numericFieldKeys.has(key) ? null : v]
+        })
     )
     // Garante FKs da connection pai→filho no body.
     // Nota: connectionParams NÃO respeita transientKeys — a connection declara explicitamente
@@ -647,6 +667,40 @@ export function CrudObject({ objectDef }: Props) {
         typeof current === 'string' && /\{\{/.test(current)
       if (current === undefined || current === null || current === '' || isUnresolved) {
         body[key] = value
+      }
+    }
+
+    // Campos workflowStatus: injeta status inicial (se vazio) e prepara historico para create.
+    type WfInjected = { entidadeHistorico: string; entityTarget: string; id_processo: number | undefined; id_status: number }
+    const wfInjected: WfInjected[] = []
+    const wfComponents = (objectDef.components ?? []).filter((c) => c.type === 'workflowStatus')
+    for (const wfc of wfComponents) {
+      const key = wfc.nameForm ?? wfc.name
+      if (!key) continue
+      const nomeProcesso = (wfc as any).nomeProcesso as string | undefined
+      const entidadeProcesso = (wfc as any).entidadeProcesso as string | undefined
+      const entityWf = (wfc as any).entityWorkflow ?? 'vw_workflow_status'
+      if (!nomeProcesso || !entidadeProcesso) continue
+      const alreadySet = body[key] != null && body[key] !== ''
+      try {
+        const res = await entityApi.getList<{ id_status: number; id_processo?: number }>(entityWf, {
+          nm_processo: nomeProcesso,
+          nm_entidade_processo: entidadeProcesso,
+          fl_estado_inicial: 'Sim',
+          pageSize: 1,
+        })
+        const initial = res.data?.[0]
+        if (initial) {
+          if (!alreadySet) body[key] = initial.id_status
+          wfInjected.push({
+            entidadeHistorico: (wfc as any).entidadeHistoricoEvento ?? 'historico_workflow',
+            entityTarget: (wfc as any).entityTarget ?? entityName,
+            id_processo: initial.id_processo,
+            id_status: alreadySet ? (body[key] as number) : initial.id_status,
+          })
+        }
+      } catch {
+        // backend vai validar se necessário
       }
     }
 
@@ -674,7 +728,39 @@ export function CrudObject({ objectDef }: Props) {
       }
     }
 
-    mutation.mutate(body)
+    // Se houver status inicial de workflow injetado, usa mutateAsync para capturar o PK
+    // do novo registro e criar o historico_workflow imediatamente após o save.
+    if (wfInjected.length > 0) {
+      try {
+        const saveResult = await mutation.mutateAsync(body)
+        const newRecord: Record<string, unknown> =
+          (saveResult as any).data ?? (saveResult as unknown as Record<string, unknown>)
+        const primary =
+          objectDef.primaryKey ??
+          (saveResult as any).primary ??
+          entitySchema?.config?.primary
+        const pkValue = primary ? newRecord[primary] : undefined
+        for (const wf of wfInjected) {
+          try {
+            await entityApi.create(wf.entidadeHistorico, {
+              id_processo: wf.id_processo,
+              nm_entidade: wf.entityTarget,
+              id_registro: pkValue,
+              id_status_anterior: null,
+              id_status_novo: wf.id_status,
+              id_transicao: null,
+              dt_transicao: new Date().toISOString().replace('T', ' ').slice(0, 19),
+            })
+          } catch {
+            // historico é best-effort — não bloqueia o fluxo principal
+          }
+        }
+      } catch {
+        // onError da mutation já exibe o toast de erro
+      }
+    } else {
+      mutation.mutate(body)
+    }
   }
 
   // Componentes do objeto (excluindo generalActions — vão pro header)
@@ -767,6 +853,16 @@ export function CrudObject({ objectDef }: Props) {
               queryParams: searchParams ?? {},
               selectedRow: searchParams ?? null,
             })
+          }
+
+          // 7. Inicia monitoramento de status se a action tiver monitor configurado
+          if (action.monitor && entityId != null) {
+            const currentValues = form.getValues()
+            const resolvedLabel = action.monitor.label.replace(
+              /\{\{(\w+)\}\}/g,
+              (_, f) => currentValues[f] !== undefined ? String(currentValues[f]) : '',
+            )
+            addMonitor(action.monitor, entityId, resolvedLabel)
           }
         })
         .catch((err: unknown) => {

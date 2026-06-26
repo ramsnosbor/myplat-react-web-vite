@@ -72,10 +72,15 @@ export function PopupNavigationProvider({ children }: { children: React.ReactNod
 export function useRegisterPopupMode(active: boolean) {
   const ctx = usePopupNavigation()
   const id = useId()
+  // Usa as funções estáveis (useCallback sem deps) para não re-disparar o
+  // effect quando o valor de `activeIds` muda — evita loop infinito de
+  // register → re-render → ctx muda → effect roda → unregister+register → ...
+  const register = ctx?.registerPopupMode
+  const unregister = ctx?.unregisterPopupMode
 
   useEffect(() => {
-    if (!ctx || !active) return
-    ctx.registerPopupMode(id)
-    return () => ctx.unregisterPopupMode(id)
-  }, [ctx, active, id])
+    if (!register || !active) return
+    register(id)
+    return () => unregister?.(id)
+  }, [register, unregister, active, id])
 }

@@ -61,7 +61,7 @@ interface NfeDraft {
     logradouro?: string; numero?: string; complemento?: string
     bairro?: string; municipio?: string; uf?: string; cep?: string
   }
-  recipient: { name: string; document: string; email?: string }
+  recipient: { name: string; document: string; email?: string; uf?: string }
   totals: {
     vProd: number; vFrete: number; vSeg: number; vDesc: number
     vOutro: number; vICMS: number; vIPI: number; vNF: number
@@ -116,13 +116,14 @@ export default function NfeViewerPage() {
   const [selectedSeriesId, setSelectedSeriesId] = useState('')
   const [mappings, setMappings] = useState<Record<string, Mapping>>({})
   const [issuerFound, setIssuerFound] = useState<boolean | null>(null)
-  const [issuerIsFilial, setIssuerIsFilial] = useState(false)
   const [impostosItem, setImpostosItem] = useState<NfeItem | null>(null)
   const [issuerExtra, setIssuerExtra] = useState<IssuerExtra>({
     email: '', emailNfe: '', nomeContato: '',
     cdRegimeTributario: '', nrInscricaoMunicipal: '',
     nrInscricaoSuframa: '', tpContribuinteIcms: '', flReterIss: '',
   })
+  const [produtosFornecedor, setProdutosFornecedor] = useState<Record<string, unknown>[]>([])
+  const [consumidorFinal, setConsumidorFinal] = useState('Sim')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [importing, setImporting] = useState(false)
   const [progress, setProgress] = useState<ProgressItem[]>([])
@@ -134,6 +135,7 @@ export default function NfeViewerPage() {
         const parsed = parseNfe(state.xmlContent)
         setXmlContent(state.xmlContent)
         setDraft(parsed)
+        setConsumidorFinal(parsed.consumidorFinal)
         setMappings(Object.fromEntries(parsed.products.map((p) => [p.number, { productId: '', cfopId: '' }])))
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Nao foi possivel processar o XML.')
@@ -150,6 +152,7 @@ export default function NfeViewerPage() {
         setXmlContent(content)
         const parsed = parseNfe(content)
         setDraft(parsed)
+        setConsumidorFinal(parsed.consumidorFinal)
         setMappings(Object.fromEntries(parsed.products.map((p) => [p.number, { productId: '', cfopId: '' }])))
       })
       .catch(() => setError('Nao foi possivel ler o arquivo XML selecionado.'))
@@ -166,7 +169,11 @@ export default function NfeViewerPage() {
         const [nfeResult, productResult, cfopResult, recipientResult, issuerResult] = await Promise.all([
           entityApi.getList<Record<string, unknown>>('nfe', { chave_acesso: draft!.key, pageNumber: 1, pageSize: 1 }),
           entityApi.getList<Record<string, unknown>>('v_produto', { pageNumber: 1, pageSize: 500, orderBy: 'nome_produto,asc' }),
-          entityApi.getList<Record<string, unknown>>('vCfopAutocomplete', { pageNumber: 1, pageSize: 500, orderBy: 'cfop,asc' }),
+          entityApi.getList<Record<string, unknown>>('vCfopAutocomplete', {
+            pageNumber: 1, pageSize: 500, orderBy: 'cfop,asc',
+            naturazaOperacao: 0,
+            tipoOperacao: draft!.issuer.uf && draft!.recipient.uf && draft!.issuer.uf === draft!.recipient.uf ? 'interna' : 'externa',
+          }),
           entityApi.getList<Record<string, unknown>>('pessoas', { cpf: maskCpfCnpj(draft!.recipient.document), pageNumber: 1, pageSize: 1 }),
           entityApi.getList<Record<string, unknown>>('pessoas', { cpf: maskCpfCnpj(draft!.issuer.document), pageNumber: 1, pageSize: 1 }),
         ])
@@ -177,7 +184,6 @@ export default function NfeViewerPage() {
         // Se emitente já existe, pré-preenche os campos extras com dados do banco
         const issuerPerson = entityRows(issuerResult)[0]
         setIssuerFound(!!issuerPerson)
-        setIssuerIsFilial(value(issuerPerson, 'fl_empresa_filial') === 'Sim')
         if (issuerPerson) {
           setIssuerExtra({
             email: value(issuerPerson, 'email'),
@@ -195,17 +201,30 @@ export default function NfeViewerPage() {
         setProducts(productList)
         setCfops(cfopList)
 
+        // Busca vínculos produto-fornecedor para auto-sugerir produtos
+        let pfList: Record<string, unknown>[] = []
+        if (issuerPerson) {
+          try {
+            const pfResult = await entityApi.getList<Record<string, unknown>>('produto_fornecedor', {
+              id_pessoa: value(issuerPerson, 'id_pessoa'), pageNumber: 1, pageSize: 500,
+            })
+            pfList = entityRows(pfResult)
+            if (!cancelled) setProdutosFornecedor(pfList)
+          } catch { /* sem vínculo ainda */ }
+        }
+
         // Auto-suggest CFOP de entrada equivalente para cada item
         setMappings((current) => {
           const next = { ...current }
           for (const item of draft!.products) {
             const entradaCfop = convertCfopToEntrada(item.cfop)
-            const found = cfopList.find(
+            const foundCfop = cfopList.find(
               (c) => value(c, 'cfop') === entradaCfop || value(c, 'cd_cfop') === entradaCfop,
             )
+            const foundPf = pfList.find((pf) => value(pf, 'cd_produto_fornecedor') === item.code)
             next[item.number] = {
-              productId: next[item.number]?.productId ?? '',
-              cfopId: next[item.number]?.cfopId || (found ? value(found, 'id_cfop') : ''),
+              productId: next[item.number]?.productId || (foundPf ? String(value(foundPf, 'id_produto') ?? '') : ''),
+              cfopId: next[item.number]?.cfopId || (foundCfop ? value(foundCfop, 'id_cfop') : ''),
             }
           }
           return next
@@ -280,8 +299,8 @@ export default function NfeViewerPage() {
       if (!firstCfopId) throw new Error('CFOP nao selecionado para o primeiro produto.')
 
       const movement = await entityApi.create<Record<string, unknown>>('movimento', compact({
-        id_pessoa: issuerId,
-        id_pessoa_empresa: recipientId,
+        id_pessoa_emitente: issuerId,
+        id_pessoa_destino: recipientId,
         id_serie: selectedSeriesId,
         id_cfop: firstCfopId,
         id_tipo_nota: 0,
@@ -303,9 +322,10 @@ export default function NfeViewerPage() {
         vl_embalagem: 0,
         vl_acrescimo: 0,
         fl_reserva_estoque: 'Nao',
+        cd_venda_presencial: 0,
         informacoes_adicionais_fisco: draft.informacoesAdicionais,
         informacoes_complementares: `Importacao XML NF-e ${draft.number}`,
-        indicador_consumidor_final: draft.consumidorFinal,
+        indicador_consumidor_final: consumidorFinal,
         email_nfe_destino: draft.recipient.email,
         id_tipo_nota_emissao: parseInt(draft.tipoEmissao) || 1,
       }))
@@ -494,6 +514,33 @@ export default function NfeViewerPage() {
             : `${impostosOk} imposto(s) inserido(s).`)
       }
 
+      // ── Vínculos produto-fornecedor ───────────────────────────────────────
+      try {
+        for (const item of draft.products) {
+          const m = mappings[item.number]
+          if (!m?.productId) continue
+          const existing = produtosFornecedor.find(
+            (pf) => value(pf, 'cd_produto_fornecedor') === item.code,
+          )
+          if (existing) {
+            if (String(value(existing, 'id_produto')) !== String(m.productId)) {
+              await entityApi.update('produto_fornecedor', {
+                id_produto_fornecedor: value(existing, 'id_produto_fornecedor'),
+                id_produto: m.productId,
+                nm_produto_fornecedor: item.description,
+              })
+            }
+          } else {
+            await entityApi.create('produto_fornecedor', {
+              id_pessoa: issuerId,
+              id_produto: m.productId,
+              cd_produto_fornecedor: item.code,
+              nm_produto_fornecedor: item.description,
+            })
+          }
+        }
+      } catch { /* best-effort — vínculo sera gravado na próxima importação */ }
+
       // ── Parcelas financeiras ───────────────────────────────────────────────
       const duplicatas = draft.financeiro.duplicatas
       if (duplicatas.length > 0) {
@@ -512,7 +559,7 @@ export default function NfeViewerPage() {
               data_entrada: new Date().toISOString().slice(0, 10),
               tipo_movimento: 'Pagar',
               valor: dup.valor,
-              observacao: '',
+              observacao: `Provisão de Pagamento compra de mercadoria ${draft.issuer.name} ref a nota ${draft.number}`,
               complemento: '',
               numero_documento: `${draft.number}/${dup.numero || String(i + 1)}`,
               id_tipo_documento: 1,
@@ -668,16 +715,6 @@ export default function NfeViewerPage() {
                   </div>
                 </div>
 
-                {/* Alerta fl_empresa_filial */}
-                {issuerFound === true && !issuerIsFilial && (
-                  <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                    <i className="bi bi-exclamation-triangle-fill mt-0.5 shrink-0 text-amber-500" aria-hidden />
-                    <span>
-                      O fornecedor <strong>{draft.issuer.name}</strong> nao esta marcado como <strong>Empresa Filial</strong> (fl_empresa_filial ≠ Sim).
-                      Verifique o cadastro antes de importar.
-                    </span>
-                  </div>
-                )}
 
                 {/* Dados do XML — somente leitura */}
                 {issuerFound !== null && (
@@ -891,6 +928,11 @@ export default function NfeViewerPage() {
                     <option key={value(s, 'id_serie')} value={value(s, 'id_serie')}>{value(s, 'descricao_serie') || value(s, 'serie') || value(s, 'id_serie')}</option>
                   ))}
                 </select>
+                <label className="mt-3 block text-xs font-medium text-slate-600">Consumidor Final</label>
+                <select className={`${selectClass} mt-1`} value={consumidorFinal} onChange={(e) => setConsumidorFinal(e.target.value)}>
+                  <option value="Sim">Sim</option>
+                  <option value="Nao">Não</option>
+                </select>
                 <dl className="mt-4 space-y-2 border-t border-slate-100 pt-3 text-sm">
                   <div className="flex justify-between gap-3"><dt className="text-slate-500">Produtos</dt><dd className="font-medium text-slate-800">{draft.products.length}</dd></div>
                   {draft.financeiro.duplicatas.length > 0 && (
@@ -1036,6 +1078,7 @@ async function resolveOrCreatePerson(
     tipo_pessoa: 'Cliente',
     situacao: 'Completo',
     fl_envia_nfe_contador: 'N',
+    fl_emite_nfe: 'Não',
     nr_inscricao_estadual: issuer.ie,
     telefone1: issuer.phone ? formatPhone(issuer.phone) : undefined,
     email: extra.email,
@@ -1211,6 +1254,7 @@ function parseNfe(xml: string): NfeDraft {
       name: text(dest, 'xNome'),
       document: text(dest, 'CNPJ') || text(dest, 'CPF'),
       email: text(dest, 'email') || undefined,
+      uf: text(first(dest, 'enderDest'), 'UF') || undefined,
     },
     totals: {
       vProd: num(text(ICMSTot, 'vProd')),
@@ -1340,7 +1384,12 @@ function compact(data: Record<string, unknown>): Record<string, unknown> {
 function toDate(v: string): string { return v ? v.slice(0, 10) : new Date().toISOString().slice(0, 10) }
 function formatCurrency(v: number) { return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) }
 function formatDate(v: string) { return v.slice(0, 10).split('-').reverse().join('/') }
-function formatPhone(v: string): string { return v.replace(/\D/g, '').slice(0, 11) }
+function formatPhone(v: string): string {
+  const d = v.replace(/\D/g, '').slice(0, 11)
+  if (d.length === 11) return d.replace(/(\d{2})(\d{5})(\d{4})/, '$1 $2-$3')
+  if (d.length === 10) return d.replace(/(\d{2})(\d{4})(\d{4})/, '$1 $2-$3')
+  return d
+}
 function errMsg(err: unknown): string {
   return (err as any)?.response?.data?.messageError ?? (err as any)?.response?.data?.message ?? (err instanceof Error ? err.message : 'Erro desconhecido')
 }

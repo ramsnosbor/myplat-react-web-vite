@@ -115,6 +115,36 @@ export const entityApi = {
   },
 
   /**
+   * Operações em lote numa única transação: POST /default/many
+   *
+   * payload: { [entity]: { [tempId]: { [field]: string } } }
+   * Usa "_action": "update" para updates; sem _action = insert.
+   * Use "#ref.entity.tempId" para referenciar a PK de um registro criado anteriormente.
+   *
+   * Retorna a mesma estrutura com os registros persistidos (incluindo PKs geradas).
+   */
+  many(
+    payload: Record<string, Record<string, Record<string, string | null | undefined>>>,
+  ): Promise<Record<string, Record<string, Record<string, unknown>>>> {
+    // Remove campos null/undefined — o Java espera Map<String,String>
+    const cleaned: Record<string, Record<string, Record<string, string>>> = {}
+    for (const [entity, tempIds] of Object.entries(payload)) {
+      cleaned[entity] = {}
+      for (const [tempId, fields] of Object.entries(tempIds)) {
+        cleaned[entity][tempId] = {}
+        for (const [field, value] of Object.entries(fields)) {
+          if (value !== null && value !== undefined && value !== '') {
+            cleaned[entity][tempId][field] = String(value)
+          }
+        }
+      }
+    }
+    return apiClient
+      .post<Record<string, Record<string, Record<string, unknown>>>>('/default/many', cleaned)
+      .then((r) => r.data)
+  },
+
+  /**
    * Download: GET /default/{entity}/download/{type}?...params...
    * type = "PDF" | "CSV"
    * Dispara download direto no navegador.

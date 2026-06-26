@@ -328,6 +328,7 @@ export type ComponentType =
   | 'chart' | 'pivot' | 'kanban' | 'monaco' | 'cep' | 'cpfCnpj' | 'phoneNumber' | 'email' | 'link' | 'button'
   | 'html' | 'hidden' | 'generalActions' | 'currency' | 'chipselect' | 'groupcheckbox' | 'linkpanel'
   | 'password' | 'fileupload'
+  | 'workflowStatus'
   | 'actions'
 
 export interface ComponentDefinition {
@@ -485,6 +486,20 @@ export interface ComponentDefinition {
   computedFrom?: string   // expressão JS com {{campo}} — avaliada em tempo real
   expression?: string     // expressão aritmética com {campo} (chave simples) — normalizado para computedFrom
   computedName?: string
+
+  // WorkflowStatus
+  /** Entidade da view de configuração do workflow (padrão: vw_workflow_status) */
+  entityWorkflow?: string
+  /** Chave do processo (ex: "compras") */
+  nomeProcesso?: string
+  /** Passo/domínio do processo (ex: "Requisicao") */
+  entidadeProcesso?: string
+  /** Campo PK do registro controlado (ex: "id_requisicao") */
+  chavePrimaria?: string
+  /** Tabela da entidade alvo a atualizar no status (ex: "compra_requisicao") */
+  entityTarget?: string
+  /** Tabela de histórico de eventos (padrão: historico_workflow) */
+  entidadeHistoricoEvento?: string
 
   // Display
   source?: string

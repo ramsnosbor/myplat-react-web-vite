@@ -13,6 +13,8 @@ import { TreeObject } from './objects/TreeObject'
 import { QuestionarioBuilderObject } from './objects/QuestionarioBuilderObject'
 import { QuestionarioResponderObject } from './objects/QuestionarioResponderObject'
 import { QuestionarioModeloObject } from './objects/QuestionarioModeloObject'
+import { AttachmentsObject } from './objects/AttachmentsObject'
+import { ApprovalListObject } from './objects/ApprovalListObject'
 
 // Lazy: isola recharts num chunk separado, evitando o bug de bundling em prod
 const ChartObject = lazy(() => import('./objects/ChartObject').then((m) => ({ default: m.ChartObject })))
@@ -231,6 +233,12 @@ export function ObjectRenderer({ objectDef }: ObjectRendererProps) {
       break
     case 'questionarioModelo':
       content = <QuestionarioModeloObject objectDef={objectDef} />
+      break
+    case 'attachments':
+      content = <AttachmentsObject objectDef={objectDef} />
+      break
+    case 'approvalList':
+      content = <ApprovalListObject objectDef={objectDef} />
       break
     default:
       content = (

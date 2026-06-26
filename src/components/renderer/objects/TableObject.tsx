@@ -1258,6 +1258,11 @@ function formatCell(value: unknown, col: ComponentDefinition): string {
   if (col.type === 'date' && typeof value === 'string') {
     return value.substring(0, 10).split('-').reverse().join('/')
   }
+  if (col.type === 'datetime' && typeof value === 'string') {
+    const date = value.substring(0, 10).split('-').reverse().join('/')
+    const time = value.substring(11, 16)
+    return time ? `${date} ${time}` : date
+  }
   if (col.type === 'switch' || col.type === 'checkbox') {
     return value === true || value === 'Sim' || value === '1' || value === 1 ? '✓' : '✗'
   }

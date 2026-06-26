@@ -18,6 +18,7 @@ import { NumberField } from './NumberField'
 import { CpfCnpjField, PhoneNumberField, EmailField } from './MaskedField'
 import { CepField } from './CepField'
 import { QuestionarioInlineComponent } from './QuestionarioInlineComponent'
+import { WorkflowStatusField } from './WorkflowStatusField'
 import { apiClient } from '@/api/client'
 import { evalExpr } from '@/utils/evalExpr'
 import { interpolate } from '@/utils/interpolate'
@@ -311,6 +312,19 @@ export function FieldRenderer({ component: comp, register, control, setValue, wa
 
     case 'questionarioInline':
       return <QuestionarioInlineComponent component={comp} control={control} mode={mode} />
+
+    case 'workflowStatus':
+      return (
+        <div className={colClass}>
+          <WorkflowStatusField
+            component={comp}
+            setValue={setValue}
+            getValues={_getValues}
+            formValues={formValues}
+            disabled={isDisabled}
+          />
+        </div>
+      )
 
     default:
       return wrapField(

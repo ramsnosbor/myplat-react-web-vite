@@ -158,18 +158,3 @@ self.addEventListener('notificationclose', (event) => {
   console.log('[Service Worker] Notificação fechada:', event.notification.data);
 });
 
-// Interceptar requisições — ignora chamadas de API, passa o resto direto
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-
-  if (
-    url.pathname.startsWith('/api') ||
-    url.pathname.startsWith('/pfs') ||
-    url.hostname.includes('api.') ||
-    event.request.url.includes('api')
-  ) {
-    return;
-  }
-
-  event.respondWith(fetch(event.request));
-});
