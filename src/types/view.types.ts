@@ -325,7 +325,7 @@ export type ComponentType =
   | 'text' | 'number' | 'decimal' | 'date' | 'select' | 'autocomplete'
   | 'switch' | 'checkbox' | 'textarea' | 'label' | 'title' | 'template'
   | 'file' | 'image' | 'richtext' | 'color' | 'mask' | 'range'
-  | 'chart' | 'pivot' | 'kanban' | 'monaco' | 'cep' | 'cpfCnpj' | 'phoneNumber' | 'email' | 'link' | 'button'
+  | 'chart' | 'pivot' | 'kanban' | 'monaco' | 'cep' | 'nfeCadastro' | 'cpfCnpj' | 'phoneNumber' | 'email' | 'link' | 'button'
   | 'html' | 'hidden' | 'generalActions' | 'currency' | 'chipselect' | 'groupcheckbox' | 'linkpanel'
   | 'password' | 'fileupload'
   | 'workflowStatus'
@@ -404,6 +404,8 @@ export interface ComponentDefinition {
   fields?: Array<{ field: string; as: string }>
   /** Mapeamento de campos do retorno do CEP para campos do form (type: cep) */
   cepFields?: Record<string, string>
+  /** Mapeamento do retorno da consulta cadastral NF-e para campos do form */
+  nfeCadastroFields?: Record<string, string>
   lockupFields?: string[]
   loadOnFocus?: boolean
   autoSelectFirst?: boolean

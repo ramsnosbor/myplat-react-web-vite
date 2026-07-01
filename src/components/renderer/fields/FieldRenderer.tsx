@@ -17,6 +17,7 @@ import { DateField } from './DateField'
 import { NumberField } from './NumberField'
 import { CpfCnpjField, PhoneNumberField, EmailField } from './MaskedField'
 import { CepField } from './CepField'
+import { NfeCadastroField } from './NfeCadastroField'
 import { QuestionarioInlineComponent } from './QuestionarioInlineComponent'
 import { WorkflowStatusField } from './WorkflowStatusField'
 import { apiClient } from '@/api/client'
@@ -157,6 +158,14 @@ export function FieldRenderer({ component: comp, register, control, setValue, wa
       return (
         <div className={colClass}>
           <CepField component={comp} control={control} setValue={setValue}
+            disabled={isDisabled} inputClass={inputClass} error={errorMessage} />
+        </div>
+      )
+
+    case 'nfeCadastro':
+      return (
+        <div className={colClass}>
+          <NfeCadastroField component={comp} control={control} setValue={setValue}
             disabled={isDisabled} inputClass={inputClass} error={errorMessage} />
         </div>
       )
