@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AppRouter } from './router'
 import { ToastProvider } from './components/ui/Toast'
 import { ActionMonitor } from './components/ui/ActionMonitor'
+import { NotificationToast } from './components/ui/NotificationToast'
 
 // ─── TanStack Query client ────────────────────────────────────────────────────
 
@@ -23,6 +24,7 @@ export default function App() {
       <ToastProvider>
         <AppRouter />
         <ActionMonitor />
+        <NotificationToast />
       </ToastProvider>
     </QueryClientProvider>
   )

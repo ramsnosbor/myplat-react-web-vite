@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useState, useRef } from 'react
 import { useForm } from 'react-hook-form'
 import { useStore } from 'zustand'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { useViewContext } from '../ViewContext'
 import { FieldRenderer } from '../fields/FieldRenderer'
 import { resolveColClass } from '@/utils/colClass'
@@ -33,8 +34,10 @@ const TEXT_FIELD_TYPES = new Set<ComponentType>(['text', 'mask'])
 export function FilterObject({ objectDef }: Props) {
   const { viewStore, connections, definition, initialParams } = useViewContext()
   const setObjectState = useStore(viewStore, (s) => s.setObjectState)
+  const objectState = useStore(viewStore, (s) => s.objects[objectDef.id])
   const navigate = useNavigate()
   const popupNav = usePopupNavigation()
+  const queryClient = useQueryClient()
 
   const ctx = (initialParams ?? {}) as Record<string, unknown>
 
@@ -47,6 +50,56 @@ export function FilterObject({ objectDef }: Props) {
 
   // Painel colapsável
   const [collapsed, setCollapsed] = useState(objectDef.collapsedByDefault ?? false)
+
+  // ── Auto-refresh recorrente (objectDef.autoRefresh) ─────────────────────────
+  // Toggle discreto: enquanto ligado, invalida a entidade (e affectedEntities) a
+  // cada N segundos, indefinidamente. Só para quando o usuário desligar — não há
+  // condição de parada automática por mudança de status.
+  // O liga/desliga vive no viewStore (não em state local) para que outros objetos
+  // da mesma tela — ex: um modal ao salvar, via objectDef.resumeAutoRefresh — possam
+  // religá-lo mesmo que o usuário tenha parado manualmente.
+  const autoRefreshOn = objectState?.autoRefreshOn ?? objectDef.autoRefresh?.enabledByDefault ?? false
+  const [autoRefreshSecondsLeft, setAutoRefreshSecondsLeft] = useState(objectDef.autoRefresh?.seconds ?? 0)
+  const wasAutoRefreshOn = useRef(autoRefreshOn)
+
+  function setAutoRefreshOn(next: boolean) {
+    setObjectState(objectDef.id, { autoRefreshOn: next })
+  }
+
+  // Sempre que autoRefreshOn passa de desligado → ligado (manual ou via resumeAutoRefresh
+  // de outro objeto), reinicia a contagem do zero.
+  useEffect(() => {
+    if (autoRefreshOn && !wasAutoRefreshOn.current) {
+      setAutoRefreshSecondsLeft(objectDef.autoRefresh?.seconds ?? 0)
+    }
+    wasAutoRefreshOn.current = autoRefreshOn
+  }, [autoRefreshOn, objectDef.autoRefresh?.seconds])
+
+  const entityMap: Record<string, string> = {}
+  for (const e of definition.entities) {
+    entityMap[e.id] = e.entity ?? e.id
+  }
+  const autoRefreshEntityName = objectDef.entity ? (entityMap[objectDef.entity] ?? objectDef.entity) : undefined
+
+  useEffect(() => {
+    if (!autoRefreshOn || !objectDef.autoRefresh) return undefined
+
+    if (autoRefreshSecondsLeft <= 0) {
+      if (autoRefreshEntityName) {
+        queryClient.invalidateQueries({ queryKey: ['entity', autoRefreshEntityName] })
+        queryClient.invalidateQueries({ queryKey: ['entity-single', autoRefreshEntityName] })
+      }
+      for (const e of objectDef.autoRefresh.affectedEntities ?? []) {
+        queryClient.invalidateQueries({ queryKey: ['entity', e] })
+        queryClient.invalidateQueries({ queryKey: ['entity-single', e] })
+      }
+      setAutoRefreshSecondsLeft(objectDef.autoRefresh.seconds)
+      return undefined
+    }
+
+    const timer = setTimeout(() => setAutoRefreshSecondsLeft((s) => s - 1), 1000)
+    return () => clearTimeout(timer)
+  }, [autoRefreshOn, autoRefreshSecondsLeft, autoRefreshEntityName, objectDef.autoRefresh, queryClient])
 
   function getOperator(fieldName: string): FilterOperator {
     return operators[fieldName] ?? 'containing'
@@ -205,17 +258,40 @@ export function FilterObject({ objectDef }: Props) {
             <h3 className="text-sm font-semibold text-foreground">{interpolate(objectDef.title, initialParams)}</h3>
           </div>
 
-          {/* Botão Novo no cabeçalho (quando collapsible) */}
-          {hasCreateButton && objectDef.collapsible && (
-            <button
-              type="button"
-              onClick={handleCreate}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors ${createBtnClass}`}
-            >
-              {createIconClass && <i className={`${createIconClass} text-xs`} />}
-              {objectDef.createButtonName ?? 'Novo'}
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {/* Toggle discreto de atualização automática recorrente */}
+            {objectDef.autoRefresh && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setAutoRefreshOn(!autoRefreshOn)
+                }}
+                title={autoRefreshOn ? 'Parar atualização automática' : 'Ativar atualização automática'}
+                className={[
+                  'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
+                  autoRefreshOn
+                    ? 'border-primary/30 bg-primary/10 text-primary'
+                    : 'border-border text-muted-foreground hover:bg-accent',
+                ].join(' ')}
+              >
+                <i className={`bi ${autoRefreshOn ? 'bi-pause-circle' : 'bi-arrow-repeat'} text-xs`} />
+                {autoRefreshOn ? `${autoRefreshSecondsLeft}s` : 'Auto'}
+              </button>
+            )}
+
+            {/* Botão Novo no cabeçalho (quando collapsible) */}
+            {hasCreateButton && objectDef.collapsible && (
+              <button
+                type="button"
+                onClick={handleCreate}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors ${createBtnClass}`}
+              >
+                {createIconClass && <i className={`${createIconClass} text-xs`} />}
+                {objectDef.createButtonName ?? 'Novo'}
+              </button>
+            )}
+          </div>
         </div>
       )}
 

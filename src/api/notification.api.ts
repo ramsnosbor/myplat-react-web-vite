@@ -70,4 +70,8 @@ export const notificationApi = {
   notifyRole(idPapel: number, texto: string): Promise<void> {
     return apiClient.post('/api/notifications/workflow', { idPapel, texto }).then(() => undefined)
   },
+
+  notifyUser(idUsuario: number, texto: string): Promise<void> {
+    return apiClient.post('/api/notifications/workflow', { idUsuario, texto }).then(() => undefined)
+  },
 }

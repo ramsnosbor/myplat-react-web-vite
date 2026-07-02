@@ -5,7 +5,9 @@ import { useEntityQuery } from '@/hooks/useEntityQuery'
 import { useViewContext } from '../ViewContext'
 import { useConnectionParams, useConnectionEnabled } from '../ObjectRenderer'
 import { useAuthStore } from '@/store/authStore'
+import { getUserId, parseJwt, type JwtPayload } from '@/lib/jwt'
 import { entityApi } from '@/api/entity.api'
+import { notificationApi } from '@/api/notification.api'
 import { resolveColClass } from '@/utils/colClass'
 import { nowBRT } from '@/utils/dateUtils'
 import type { ObjectDefinition } from '@/types/view.types'
@@ -40,7 +42,7 @@ export function ApprovalListObject({ objectDef }: Props) {
   const { initialParams } = useViewContext()
   const connectionParams = useConnectionParams(objectDef.id)
   const isEnabled = useConnectionEnabled(objectDef.id)
-  const currentUser = useAuthStore((s) => s.user)
+  const token = useAuthStore((s) => s.token)
   const queryClient = useQueryClient()
   const navigate = useNavigate()
 
@@ -63,16 +65,24 @@ export function ApprovalListObject({ objectDef }: Props) {
   const f = (row: EntityRecord, key: string): unknown =>
     fields[key] ? row[fields[key]] : row[key]
 
+  // Extrai id_usuario e nome do JWT
+  const idUsuario = token ? getUserId(token) : null
+  const jwtPayload = token ? parseJwt<JwtPayload>(token) : null
+  const nomeRespondente = jwtPayload?.name ?? jwtPayload?.username ?? null
+
   // ─── Query principal ────────────────────────────────────────────────────────
+  const queryParams = {
+    ...connectionParams,
+    ...filterConfig,
+    ...(idUsuario != null ? { id_usuario: idUsuario } : {}),
+    pageSize,
+    pageNumber: page,
+    ...(orderByConfig ? { orderBy: orderByConfig } : {}),
+  }
+
   const { data, isLoading } = useEntityQuery({
     entity: entityName,
-    params: {
-      ...connectionParams,
-      ...filterConfig,
-      pageSize,
-      page,
-      ...(orderByConfig ? { orderBy: orderByConfig } : {}),
-    },
+    params: queryParams,
     enabled: isEnabled && !!entityName,
   })
 
@@ -112,7 +122,7 @@ export function ApprovalListObject({ objectDef }: Props) {
           _action: 'update',
           id_aprovacao: String(idAprovacao),
           ds_situacao: tipo,
-          nm_respondente: currentUser?.name ?? currentUser?.username ?? null,
+          nm_respondente: nomeRespondente,
           dt_resposta: dtNow,
           ds_observacao: obs || null,
           ...(tipo === 'Aprovado'
@@ -148,10 +158,20 @@ export function ApprovalListObject({ objectDef }: Props) {
       }
 
       await entityApi.many(payload)
+
+      const idSolicitante = f(row, 'idSolicitante')
+      const titulo = f(row, 'titulo') as string | null
+      return {
+        idSolicitante: typeof idSolicitante === 'number' ? idSolicitante : null,
+        texto: `${titulo ?? 'Aprovação'}: ${tipo === 'Aprovado' ? 'aprovada' : 'reprovada'}`,
+      }
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['entity', entityName] })
       queryClient.invalidateQueries({ queryKey: ['entity'] })
+      if (result?.idSolicitante != null) {
+        notificationApi.notifyUser(result.idSolicitante, result.texto).catch(() => {})
+      }
       closeModal()
     },
   })

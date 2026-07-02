@@ -28,9 +28,17 @@ interface NfeImpostos {
   vDesc?: string; vOutro?: string; vFrete?: string; vSeg?: string
 }
 
+interface NfeRastro {
+  numeroLote: string
+  dtFabricacao: string
+  dtValidade: string
+  quantidade: number
+}
+
 interface NfeItem {
   number: string
   code: string
+  barcode: string
   description: string
   cfop: string
   unit: string
@@ -38,6 +46,7 @@ interface NfeItem {
   unitValue: number
   total: number
   impostos: NfeImpostos
+  rastro: NfeRastro[]
 }
 
 interface NfeVolume {
@@ -117,6 +126,8 @@ export default function NfeViewerPage() {
   const [mappings, setMappings] = useState<Record<string, Mapping>>({})
   const [issuerFound, setIssuerFound] = useState<boolean | null>(null)
   const [impostosItem, setImpostosItem] = useState<NfeItem | null>(null)
+  const [loteModalItem, setLoteModalItem] = useState<NfeItem | null>(null)
+  const [manualLotes, setManualLotes] = useState<Record<string, NfeRastro | undefined>>({})
   const [issuerExtra, setIssuerExtra] = useState<IssuerExtra>({
     email: '', emailNfe: '', nomeContato: '',
     cdRegimeTributario: '', nrInscricaoMunicipal: '',
@@ -213,7 +224,11 @@ export default function NfeViewerPage() {
           } catch { /* sem vínculo ainda */ }
         }
 
-        // Auto-suggest CFOP de entrada equivalente para cada item
+        // Auto-suggest CFOP + produto de entrada equivalente para cada item.
+        // Sugestão de produto: valida o código de barras (cEAN do XML) contra o
+        // cd_barras cadastrado no produto antes de aceitar — evita sugerir o
+        // produto errado quando o vínculo produto-fornecedor está desatualizado
+        // ou o cd_produto_fornecedor colide com outro item.
         setMappings((current) => {
           const next = { ...current }
           for (const item of draft!.products) {
@@ -221,9 +236,27 @@ export default function NfeViewerPage() {
             const foundCfop = cfopList.find(
               (c) => value(c, 'cfop') === entradaCfop || value(c, 'cd_cfop') === entradaCfop,
             )
+
             const foundPf = pfList.find((pf) => value(pf, 'cd_produto_fornecedor') === item.code)
+            let suggestedProductId = foundPf ? String(value(foundPf, 'id_produto') ?? '') : ''
+
+            if (suggestedProductId && item.barcode) {
+              const suggestedProduct = productList.find((p) => String(value(p, 'id_produto')) === suggestedProductId)
+              const productBarcode = value(suggestedProduct, 'cd_barras')
+              // Produto cadastrado tem código de barras E ele diverge do XML → sugestão incorreta, descarta.
+              if (productBarcode && productBarcode !== item.barcode) {
+                suggestedProductId = ''
+              }
+            }
+
+            // Sem sugestão via fornecedor (ou descartada por divergência de EAN) — tenta achar pelo código de barras direto.
+            if (!suggestedProductId && item.barcode) {
+              const byBarcode = productList.find((p) => value(p, 'cd_barras') === item.barcode)
+              if (byBarcode) suggestedProductId = String(value(byBarcode, 'id_produto') ?? '')
+            }
+
             next[item.number] = {
-              productId: next[item.number]?.productId || (foundPf ? String(value(foundPf, 'id_produto') ?? '') : ''),
+              productId: next[item.number]?.productId || suggestedProductId,
               cfopId: next[item.number]?.cfopId || (foundCfop ? value(foundCfop, 'id_cfop') : ''),
             }
           }
@@ -257,11 +290,29 @@ export default function NfeViewerPage() {
     setMappings((cur) => ({ ...cur, [itemNumber]: { ...(cur[itemNumber] ?? { productId: '', cfopId: '' }), [field]: next } }))
   }
 
+  function productRequiresLote(productId: string | undefined): boolean {
+    if (!productId) return false
+    const p = products.find((pr) => String(value(pr, 'id_produto')) === productId)
+    return value(p, 'usar_lote') === 'Sim'
+  }
+
+  function saveManualLote(itemNumber: string, lote: NfeRastro) {
+    setManualLotes((cur) => ({ ...cur, [itemNumber]: lote }))
+  }
+
   function validateBeforeConfirm() {
     if (!draft) return false
     if (!selectedSeriesId) { toast.error('Selecione a serie de entrada antes de importar.'); return false }
     const missing = draft.products.find((p) => !mappings[p.number]?.productId || !mappings[p.number]?.cfopId)
     if (missing) { toast.error(`Vincule o produto e o CFOP do item ${missing.number} antes de importar.`); return false }
+    const missingLote = draft.products.find((p) => {
+      if (!productRequiresLote(mappings[p.number]?.productId)) return false
+      return p.rastro.length === 0 && !manualLotes[p.number]
+    })
+    if (missingLote) {
+      toast.error(`Informe o lote do item ${missingLote.number} antes de importar (produto exige controle de lote).`)
+      return false
+    }
     setConfirmOpen(true)
     return true
   }
@@ -367,11 +418,42 @@ export default function NfeViewerPage() {
 
       for (const item of draft.products) {
         const m = mappings[item.number]
+
+        // ── Lote (rastreabilidade) ─────────────────────────────────────────
+        // Usa o lote vindo do XML (<rastro>) quando existir; senão o lote
+        // digitado manualmente pelo usuário. Localiza por (id_produto,
+        // numero_lote) para não duplicar em reimportações/itens repetidos.
+        let idProdutoLote: string | undefined
+        const lote = item.rastro[0] ?? manualLotes[item.number]
+        if (lote && productRequiresLote(m.productId)) {
+          try {
+            const existingLote = await entityApi.getList<Record<string, unknown>>('produto_lote', {
+              id_produto: m.productId, numero_lote: lote.numeroLote, pageNumber: 1, pageSize: 1,
+            })
+            const foundLote = entityRows(existingLote)[0]
+            if (foundLote) {
+              idProdutoLote = value(foundLote, 'id_produto_lote')
+            } else {
+              const createdLote = await entityApi.create<Record<string, unknown>>('produto_lote', compact({
+                id_produto: m.productId,
+                numero_lote: lote.numeroLote,
+                dt_fabricacao: lote.dtFabricacao || null,
+                dt_validade: lote.dtValidade,
+                situacao: 'Ativo',
+              }))
+              idProdutoLote = value(createdLote.data, 'id_produto_lote')
+            }
+          } catch {
+            // Não bloqueia a importação — item seguirá sem lote vinculado.
+          }
+        }
+
         let idMovProduto: string = ''
         try {
           const res = await entityApi.create<Record<string, unknown>>('movimento_produto', compact({
             id_movimento: movementId,
             id_produto: m.productId,
+            id_produto_lote: idProdutoLote,
             id_cfop: m.cfopId,
             id_tributacao: 0,
             id_tabela_preco: 0,
@@ -805,7 +887,7 @@ export default function NfeViewerPage() {
                       <col style={{ width: '60px' }} />
                       <col style={{ width: '90px' }} />
                       <col />
-                      <col style={{ width: '90px' }} />
+                      <col style={{ width: '120px' }} />
                     </colgroup>
                     <thead className="bg-slate-50 text-left text-xs text-slate-500">
                       <tr>
@@ -848,13 +930,41 @@ export default function NfeViewerPage() {
                             </div>
                           </td>
                           <td className="px-3 py-2 text-center">
-                            <button
-                              type="button"
-                              onClick={() => setImpostosItem(item)}
-                              className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition-colors"
-                            >
-                              <i className="bi bi-calculator" aria-hidden /> Impostos
-                            </button>
+                            <div className="flex flex-col items-stretch gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setImpostosItem(item)}
+                                className="inline-flex items-center justify-center gap-1 rounded px-2 py-1 text-xs font-medium bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition-colors"
+                              >
+                                <i className="bi bi-calculator" aria-hidden /> Impostos
+                              </button>
+
+                              {productRequiresLote(mappings[item.number]?.productId) && (
+                                item.rastro.length > 0 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setLoteModalItem(item)}
+                                    className="inline-flex items-center justify-center gap-1 rounded px-2 py-1 text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                                  >
+                                    <i className="bi bi-upc-scan" aria-hidden /> Lote (XML)
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setLoteModalItem(item)}
+                                    className={[
+                                      'inline-flex items-center justify-center gap-1 rounded px-2 py-1 text-xs font-medium border transition-colors',
+                                      manualLotes[item.number]
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                        : 'bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100',
+                                    ].join(' ')}
+                                  >
+                                    <i className={`bi ${manualLotes[item.number] ? 'bi-check-circle' : 'bi-exclamation-triangle'}`} aria-hidden />
+                                    {manualLotes[item.number] ? 'Lote definido' : 'Criar Lote'}
+                                  </button>
+                                )
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -967,6 +1077,14 @@ export default function NfeViewerPage() {
       )}
       {impostosItem && (
         <ImpostosModal item={impostosItem} onClose={() => setImpostosItem(null)} />
+      )}
+      {loteModalItem && (
+        <LoteModal
+          item={loteModalItem}
+          initial={manualLotes[loteModalItem.number]}
+          onClose={() => setLoteModalItem(null)}
+          onSave={(lote) => { saveManualLote(loteModalItem.number, lote); setLoteModalItem(null) }}
+        />
       )}
     </AppShell>
   )
@@ -1213,9 +1331,20 @@ function parseNfe(xml: string): NfeDraft {
     const prod = first(det as unknown as Document, 'prod')
     const impostoEl = det.querySelector ? det.querySelector('imposto') : elements(det as unknown as Document, 'imposto')[0]
     const impostos = impostoEl ? parseImpostos(impostoEl) : {}
+    const rastro = elements(prod, 'rastro').map((r) => ({
+      numeroLote: text(r, 'nLote'),
+      dtFabricacao: text(r, 'dFab'),
+      dtValidade: text(r, 'dVal'),
+      quantidade: num(text(r, 'qLote')),
+    }))
+    const cEAN = text(prod, 'cEAN')
+    const cEANTrib = text(prod, 'cEANTrib')
+    // "SEM GTIN" é o valor padrão da NFe quando o produto não tem código de barras
+    const barcode = (cEAN && cEAN !== 'SEM GTIN') ? cEAN : ((cEANTrib && cEANTrib !== 'SEM GTIN') ? cEANTrib : '')
     return {
       number: det.getAttribute('nItem') || String(index + 1),
       code: text(prod, 'cProd'),
+      barcode,
       description: text(prod, 'xProd'),
       cfop: text(prod, 'CFOP'),
       unit: text(prod, 'uCom'),
@@ -1223,6 +1352,7 @@ function parseNfe(xml: string): NfeDraft {
       unitValue: num(text(prod, 'vUnCom')),
       total: num(text(prod, 'vProd')),
       impostos,
+      rastro,
     }
   })
 
@@ -1635,6 +1765,103 @@ function ImpostosModal({ item, onClose }: { item: NfeItem; onClose: () => void }
           <button type="button" onClick={onClose} className="rounded-md bg-slate-100 px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-200">
             Fechar
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function LoteModal({ item, initial, onClose, onSave }: {
+  item: NfeItem
+  initial?: NfeRastro
+  onClose: () => void
+  onSave: (lote: NfeRastro) => void
+}) {
+  const isRastreavel = item.rastro.length > 0
+
+  const [numeroLote, setNumeroLote] = useState(initial?.numeroLote ?? '')
+  const [dtFabricacao, setDtFabricacao] = useState(initial?.dtFabricacao ?? '')
+  const [dtValidade, setDtValidade] = useState(initial?.dtValidade ?? '')
+
+  function handleSave() {
+    onSave({
+      numeroLote: numeroLote.trim(),
+      dtFabricacao,
+      dtValidade,
+      quantidade: item.quantity,
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">
+              {isRastreavel ? 'Lote informado no XML' : 'Criar lote'}
+            </h2>
+            <p className="mt-0.5 max-w-xs truncate text-xs text-slate-500">{item.description}</p>
+          </div>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <i className="bi bi-x-lg text-base" aria-hidden />
+          </button>
+        </div>
+
+        <div className="px-5 py-4">
+          {isRastreavel ? (
+            <div className="space-y-3">
+              {item.rastro.map((r, i) => (
+                <dl key={i} className="grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-md border border-emerald-100 bg-emerald-50/50 p-3">
+                  <div className="col-span-2 flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                    <i className="bi bi-upc-scan" aria-hidden /> Lote {i + 1}
+                  </div>
+                  <div><dt className="text-xs text-slate-500">Número</dt><dd className="text-xs font-medium text-slate-800">{r.numeroLote || '—'}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Quantidade</dt><dd className="text-xs font-medium text-slate-800">{r.quantidade}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Fabricação</dt><dd className="text-xs font-medium text-slate-800">{r.dtFabricacao ? formatDate(r.dtFabricacao) : '—'}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Validade</dt><dd className="text-xs font-medium text-slate-800">{r.dtValidade ? formatDate(r.dtValidade) : '—'}</dd></div>
+                </dl>
+              ))}
+              <p className="text-xs text-slate-400">
+                Esse lote foi extraído automaticamente do XML e será criado/vinculado ao confirmar a importação.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                Este produto exige controle de lote e o XML não trouxe essa informação (tag &lt;rastro&gt; ausente). Informe manualmente abaixo.
+              </p>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Número do lote *</label>
+                <input className={inputClass} value={numeroLote} onChange={(e) => setNumeroLote(e.target.value)} placeholder="Ex: L2026070001" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-600">Fabricação</label>
+                  <input type="date" className={inputClass} value={dtFabricacao} onChange={(e) => setDtFabricacao(e.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-600">Validade *</label>
+                  <input type="date" className={inputClass} value={dtValidade} onChange={(e) => setDtValidade(e.target.value)} />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
+          <button type="button" onClick={onClose} className="rounded-md bg-slate-100 px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-200">
+            Fechar
+          </button>
+          {!isRastreavel && (
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={!numeroLote.trim() || !dtValidade}
+              className="rounded-md bg-blue-700 px-4 py-2 text-xs font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Salvar lote
+            </button>
+          )}
         </div>
       </div>
     </div>

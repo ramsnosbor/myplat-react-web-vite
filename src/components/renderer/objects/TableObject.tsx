@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useStore } from 'zustand'
 import { useQueryClient, useMutation } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useViewContext } from '../ViewContext'
 import { useConnectionParams, useConnectionEnabled } from '../ObjectRenderer'
 import { useAuthStore } from '@/store/authStore'
@@ -16,6 +16,7 @@ import type { ObjectDefinition, ComponentDefinition, ComponentAction } from '@/t
 import { interpolate } from '@/utils/interpolate'
 import { evalExpr } from '@/utils/evalExpr'
 import { storePendingUpload } from '@/utils/pendingUpload'
+import { isActionAllowed, resolveCurrentMenuId } from '@/utils/actionPermissions'
 import type { EntityListResponse, EntityRecord } from '@/types/entity.types'
 
 interface Props {
@@ -51,11 +52,20 @@ export function TableObject({ objectDef }: Props) {
   const { viewStore, connections, definition, initialParams, screenParams } = useViewContext()
   const objectState = useStore(viewStore, (s) => s.objects[objectDef.id])
   const setObjectState = useStore(viewStore, (s) => s.setObjectState)
+  const pageContext = useStore(viewStore, (s) => s.pageContext)
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const location = useLocation()
   const toast = useToast()
   const { confirm, confirmDialog } = useConfirm()
   const tenantCode = useAuthStore((s) => s.tenant?.code ?? '')
+  const modules = useAuthStore((s) => s.modules)
+  const hasActionAccess = useAuthStore((s) => s.hasActionAccess)
+  const currentMenuId = resolveCurrentMenuId(modules, location.pathname)
+  const isPermittedAction = useCallback(
+    (action: ComponentAction) => isActionAllowed(action, currentMenuId, hasActionAccess),
+    [currentMenuId, hasActionAccess],
+  )
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const [uploadAction, setUploadAction] = useState<ComponentAction | null>(null)
 
@@ -180,8 +190,11 @@ export function TableObject({ objectDef }: Props) {
   )
 
   // Verifica se há colunas de ações
-  const actionColumns = columns.filter((c) => c.actions && c.actions.length > 0)
+  const actionColumns = columns
+    .filter((c) => c.actions && c.actions.some(isPermittedAction))
+    .map((c) => ({ ...c, actions: (c.actions ?? []).filter(isPermittedAction) }))
   const dataColumns = columns.filter((c) => !c.actions || c.actions.length === 0)
+  const permittedGeneralActions = generalActions.flatMap((ga) => ga.actions ?? []).filter(isPermittedAction)
 
   // Mutação de exclusão
   const deleteMutation = useMutation({
@@ -565,11 +578,12 @@ export function TableObject({ objectDef }: Props) {
           )}
           {generalActions.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
-              {generalActions.flatMap((ga) => ga.actions ?? []).map((action, i) => (
+              {permittedGeneralActions.map((action, i) => (
                 <GeneralActionButton
                   key={i}
                   action={action}
                   onAction={handleGeneralAction}
+                  pageContext={pageContext}
                 />
               ))}
             </div>
@@ -584,12 +598,13 @@ export function TableObject({ objectDef }: Props) {
           )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-          {generalActions.flatMap((ga) => ga.actions ?? []).map((action, i) => (
+          {permittedGeneralActions.map((action, i) => (
             <GeneralActionButton
               key={i}
               action={action}
               onAction={handleGeneralAction}
               disabled={!enabled}
+              pageContext={pageContext}
             />
           ))}
           <TableSettingsButton
@@ -736,7 +751,7 @@ export function TableObject({ objectDef }: Props) {
                                 <ActionButton
                                   key={`${col.idComponent}-${ai}`}
                                   action={action}
-                                  row={row}
+                                  row={{ ...pageContext, ...row }}
                                   onAction={handleRowAction}
                                 />
                               ))}
@@ -769,6 +784,7 @@ export function TableObject({ objectDef }: Props) {
                     actionColumns={actionColumns}
                     selected={isSelected}
                     style={rowStyle}
+                    pageContext={pageContext}
                     onSelect={() => setObjectState(objectDef.id, { selectedRow: row })}
                     onAction={handleRowAction}
                   />
@@ -839,6 +855,7 @@ interface TableMobileCardProps {
   actionColumns: ComponentDefinition[]
   selected: boolean
   style?: React.CSSProperties
+  pageContext?: Record<string, unknown>
   onSelect: () => void
   onAction: (action: ComponentAction, row: EntityRecord) => void
 }
@@ -849,6 +866,7 @@ function TableMobileCard({
   actionColumns,
   selected,
   style,
+  pageContext,
   onSelect,
   onAction,
 }: TableMobileCardProps) {
@@ -906,7 +924,7 @@ function TableMobileCard({
             <ActionButton
               key={`${action.action}-${action.name ?? action.title ?? index}`}
               action={action}
-              row={row}
+              row={{ ...pageContext, ...row }}
               onAction={onAction}
             />
           ))}
@@ -1066,9 +1084,12 @@ interface GeneralActionButtonProps {
   action: ComponentAction
   onAction: (action: ComponentAction) => void
   disabled?: boolean
+  pageContext?: Record<string, unknown>
 }
 
-function GeneralActionButton({ action, onAction, disabled }: GeneralActionButtonProps) {
+function GeneralActionButton({ action, onAction, disabled, pageContext }: GeneralActionButtonProps) {
+  if (!isActionVisible(action.visible, pageContext ?? {})) return null
+
   const label = action.title ?? action.name ?? ''
   const variantClass = GA_VARIANT[action.variant ?? 'primary'] ?? GA_VARIANT['primary']
   const title = disabled
@@ -1250,10 +1271,16 @@ function ActionButton({ action, row, onAction }: ActionButtonProps) {
 
 function formatCell(value: unknown, col: ComponentDefinition): string {
   if (value === null || value === undefined) return ''
-  if (col.type === 'currency' || col.type === 'decimal') {
+  if (col.type === 'currency') {
     const n = Number(value)
     if (isNaN(n)) return String(value)
     return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  }
+  if (col.type === 'decimal' || col.type === 'number') {
+    const n = Number(value)
+    if (isNaN(n)) return String(value)
+    const dec = col.decimalPlaces ?? col.decimal ?? (col.type === 'decimal' ? 2 : 0)
+    return n.toLocaleString('pt-BR', { minimumFractionDigits: dec, maximumFractionDigits: dec })
   }
   if (col.type === 'date' && typeof value === 'string') {
     return value.substring(0, 10).split('-').reverse().join('/')

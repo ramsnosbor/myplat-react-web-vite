@@ -49,10 +49,23 @@ function PageLoader() {
 function ProtectedLayout() {
   const token = useAuthStore((s) => s.token)
   const tenant = useAuthStore((s) => s.tenant)
+  const actionAcl = useAuthStore((s) => s.actionAcl)
   const hasHydrated = useAuthStore((s) => s._hasHydrated)
   const { setUser, setTenant, setAcl, setModules, logout } = useAuthStore()
   const navigate = useNavigate()
   const [restoring, setRestoring] = useState(false)
+
+  useEffect(() => {
+    if (!hasHydrated || !token || !tenant || actionAcl !== null) return
+
+    authApi.getPermissions()
+      .then((perms) => {
+        setAcl(perms.menus, undefined, perms.idUsuario, perms.acoes ?? {})
+      })
+      .catch(() => {
+        // Mantem a sessao atual: sem mapa de acoes, o sistema continua permissivo.
+      })
+  }, [actionAcl, hasHydrated, setAcl, tenant, token])
 
   useEffect(() => {
     // Aguarda Zustand terminar a reidratação do localStorage antes de agir.
@@ -96,7 +109,7 @@ function ProtectedLayout() {
           const homePath = resolveHomePath(perms, allModules, isClienteAccess)
 
           setTenant({ code: tenantCode, label: tenantLabel })
-          setAcl(perms.menus, homePath)
+          setAcl(perms.menus, homePath, perms.idUsuario, perms.acoes ?? null)
           setModules(filterModules(allModules, perms.menus, tenantModuleIds, {
             failClosed: isClienteAccess,
             unrestricted: isFullAdminToken(token),
@@ -124,7 +137,7 @@ function ProtectedLayout() {
 
         setUser(userData)
         setTenant({ code: tenantCode, label: tenantLabel })
-        setAcl(perms.menus, homePath)
+        setAcl(perms.menus, homePath, perms.idUsuario, perms.acoes ?? null)
         setModules(
           filterModules(allModules, perms.menus, tenantModuleIds, {
             failClosed: isClienteAccess,

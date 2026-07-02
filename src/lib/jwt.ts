@@ -29,5 +29,21 @@ export interface JwtPayload {
   tpVinculo?: string
   grantedAuthorities?: string[]
   authorities?: string[]
+  id_usuario?: number
+  userId?: number
   [key: string]: unknown
+}
+
+/**
+ * Extrai o ID do usuário do JWT.
+ * O token contém o claim `userId` (número).
+ */
+export function getUserId(token: string): number | null {
+  try {
+    const jwt = parseJwt<JwtPayload>(token)
+    const id = jwt.userId ?? jwt.id_usuario
+    return typeof id === 'number' ? id : null
+  } catch {
+    return null
+  }
 }

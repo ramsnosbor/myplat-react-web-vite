@@ -3,8 +3,9 @@ import { apiClient } from './client'
 export interface ReportFilterDefinition {
   field: string
   label: string
-  type?: 'TEXT' | 'DATE' | 'NUMBER' | 'DATE_RANGE' | 'NUMBER_RANGE' | string
+  type?: 'TEXT' | 'DATE' | 'NUMBER' | 'DATE_RANGE' | 'NUMBER_RANGE' | 'SELECT' | string
   predefinedValues?: string[]
+  options?: string[]
   active?: boolean
   sequence?: number
 }

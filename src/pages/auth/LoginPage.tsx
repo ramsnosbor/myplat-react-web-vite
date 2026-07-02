@@ -183,7 +183,12 @@ export async function finalizarLogin(
   tenantLabel: string,
   setToken: (t: string) => void,
   setTenant: (t: { code: string; label: string }) => void,
-  setAcl: (acl: import('@/api/auth.api').AclMap, homePath?: string) => void,
+  setAcl: (
+    acl: import('@/api/auth.api').AclMap,
+    homePath?: string,
+    idUsuario?: number | null,
+    actionAcl?: import('@/api/auth.api').ActionAclMap | null,
+  ) => void,
   navigate: (path: string) => void,
   setModules?: (m: import('@/api/auth.api').ModuleDefinition[]) => void,
   setUser?: (u: import('@/api/auth.api').User) => void,
@@ -215,13 +220,13 @@ export async function finalizarLogin(
       (userData.status === 'fulfilled' && String(userData.value.type ?? '').toUpperCase() === 'CLIENTE') ||
       (perms.perfis ?? []).some((perfil) => String(perfil.tipo ?? '').toUpperCase() === 'CLIENTE')
     homePath = resolveHomePath(perms, allModules, isClienteAccess)
-    setAcl(perms.menus, homePath)
+    setAcl(perms.menus, homePath, perms.idUsuario, perms.acoes ?? null)
     setModules(filterModules(allModules, perms.menus, tenantModuleIds, {
       failClosed: isClienteAccess,
       unrestricted: isFullAdminToken(tenantRes.token),
     }))
   } else {
-    setAcl(perms.menus, homePath)
+    setAcl(perms.menus, homePath, perms.idUsuario, perms.acoes ?? null)
   }
 
   navigate(homePath)

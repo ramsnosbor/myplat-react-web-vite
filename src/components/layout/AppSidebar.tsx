@@ -94,7 +94,7 @@ function useEnsureModulesLoaded() {
         const allModules = await authApi.getSystemModules()
         if (permsResult.status === 'fulfilled') {
           const homePath = resolveHomePath(permsResult.value, allModules, isClienteAccess)
-          setAcl(permsResult.value.menus, homePath)
+          setAcl(permsResult.value.menus, homePath, permsResult.value.idUsuario, permsResult.value.acoes ?? null)
         }
         setModules(filterModules(allModules, resolvedAcl, tenantModuleIds, {
           failClosed: isClienteAccess,

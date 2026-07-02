@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 import { useEntityQuery } from '@/hooks/useEntityQuery'
 import { useViewContext } from '../ViewContext'
 import { useConnectionParams, useConnectionEnabled } from '../ObjectRenderer'
+import { useAuthStore } from '@/store/authStore'
+import { getUserId } from '@/lib/jwt'
 import type { ObjectDefinition, ComponentDefinition } from '@/types/view.types'
 import type { EntityRecord } from '@/types/entity.types'
 
@@ -20,9 +22,15 @@ export function GridObject({ objectDef }: Props) {
   const connectionParams = useConnectionParams(objectDef.id)
   const enabled = useConnectionEnabled(objectDef.id)
 
+  // injectCurrentUser: injeta id_usuario extraído do JWT na query
+  const injectCurrentUser: boolean = (objectDef as any).injectCurrentUser === true
+  const token = useAuthStore((s) => s.token)
+  const resolvedIdUsuario = injectCurrentUser && token ? getUserId(token) : null
+
   const queryParams = {
     ...connectionParams,
     ...(objectState?.queryParams ?? {}),
+    ...(resolvedIdUsuario != null ? { id_usuario: resolvedIdUsuario } : {}),
   }
 
   const { data, isLoading, isError } = useEntityQuery({

@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useForm, useWatch } from 'react-hook-form'
 import { useStore } from 'zustand'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -19,6 +19,8 @@ import type { ObjectState } from '@/store/viewStore'
 import { storePendingUpload } from '@/utils/pendingUpload'
 import { usePopupNavigation } from '@/contexts/PopupNavigationContext'
 import { useMonitorStore } from '@/store/monitorStore'
+import { useAuthStore } from '@/store/authStore'
+import { isActionAllowed, resolveCurrentMenuId } from '@/utils/actionPermissions'
 
 interface Props {
   objectDef: ObjectDefinition
@@ -34,6 +36,7 @@ function resolveActionRoute(path: string) {
 
 export function CrudObject({ objectDef }: Props) {
   const navigate = useNavigate()
+  const location = useLocation()
   const popupNav = usePopupNavigation()
   const { viewStore, initialParams = {}, connections, definition, screenParams } = useViewContext()
   const objectState = useStore(viewStore, (s) => s.objects[objectDef.id])
@@ -43,6 +46,13 @@ export function CrudObject({ objectDef }: Props) {
   const { confirm, confirmDialog } = useConfirm()
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const [uploadAction, setUploadAction] = useState<CrudAction | null>(null)
+  const modules = useAuthStore((s) => s.modules)
+  const hasActionAccess = useAuthStore((s) => s.hasActionAccess)
+  const currentMenuId = resolveCurrentMenuId(modules, location.pathname)
+  const isPermittedAction = useCallback(
+    (action: CrudAction, mode?: string) => isActionAllowed(action, currentMenuId, hasActionAccess, mode),
+    [currentMenuId, hasActionAccess],
+  )
 
   // Mapa id→entity: nos objetos/componentes "entity" guarda o entities[].id,
   // mas a API recebe o entities[].entity (que pode diferir do id).
@@ -121,6 +131,24 @@ export function CrudObject({ objectDef }: Props) {
     if (idIpEntries.length > 0) {
       const ownedEntries = idIpEntries.filter(([k]) => explicitInputKeys.has(k))
       return Object.fromEntries(ownedEntries.length > 0 ? ownedEntries : idIpEntries)
+    }
+
+    // 3b. chavePrimaria declarada explicitamente no objectDef — cobre PKs sem prefixo id_
+    // (ex: produto.id). Seguro: só ativa quando o JSON declara intencionalmente qual campo é a PK.
+    const pkField = (objectDef as any).chavePrimaria ?? (objectDef as any).primaryKey
+    if (pkField && isValid(ip[pkField])) {
+      return { [pkField]: ip[pkField] }
+    }
+
+    // 3c. Navegação via action explícita (_mode presente) sem nenhum id_* encontrado.
+    // O TableObject declarou key/sourceKey no action mas a PK não segue convenção id_*.
+    // Aceita params de initialParams que estejam explicitamente em componentes deste CRUD.
+    // Seguro: só ativa quando há _mode (navegação intencional) E a chave está nos inputs do CRUD.
+    if (ip._mode && idIpEntries.length === 0) {
+      const ownedEntries = Object.entries(ip).filter(
+        ([k, v]) => !k.startsWith('_') && explicitInputKeys.has(k) && isValid(v)
+      )
+      if (ownedEntries.length > 0) return Object.fromEntries(ownedEntries)
     }
 
     // 4. selectedRow como último recurso (ex: connection pai→filho sem queryParams explícito)
@@ -440,6 +468,12 @@ export function CrudObject({ objectDef }: Props) {
             selectedRow: newRecord,
           })
         }
+      }
+
+      // Religa auto-refresh de objetos declarados (ex: filtroNfe), mesmo que o
+      // usuário tenha parado manualmente antes de salvar este modal.
+      for (const targetId of objectDef.resumeAutoRefresh ?? []) {
+        setObjectState(targetId, { autoRefreshOn: true })
       }
 
       // Executa hooks afterCreate / afterUpdate
@@ -1081,6 +1115,7 @@ export function CrudObject({ objectDef }: Props) {
 
   // CrudActions filtradas por visibilidade no modo atual e por expressão visible
   const visibleActions = (objectDef.crudActions ?? []).filter((a) => {
+    if (!isPermittedAction(a, resolvedMode)) return false
     if (a.visibleOn && !a.visibleOn.includes(resolvedMode)) return false
     if (a.visible) {
       const result = evalExpr(a.visible as string, formValues)
@@ -1098,7 +1133,8 @@ export function CrudObject({ objectDef }: Props) {
   const showStandardButtons =
     showSaveButtonsOk &&
     objectDef.hideButtons !== true &&
-    !isDetail
+    !isDetail &&
+    isPermittedAction({ action: 'save' }, resolvedMode)
 
   // Voltar: visível em qualquer modo (create, edit, detail)
   const showBackButton = objectDef.showBackButton !== false && objectDef.hideButtons !== true

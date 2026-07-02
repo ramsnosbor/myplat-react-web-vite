@@ -6,6 +6,8 @@ import type { MenuItemDefinition, ModuleDefinition } from '@/api/auth.api'
 import { notificationApi, type NotificationItem } from '@/api/notification.api'
 import { useAuthStore } from '@/store/authStore'
 import { isClienteToken } from '@/pages/auth/authFlow'
+import { useNotificationToastStore } from '@/store/notificationToastStore'
+import { playNotificationBeep } from '@/utils/notificationSound'
 
 interface AppShellProps {
   title: string
@@ -43,6 +45,34 @@ export function AppShell({ title, subtitle, children }: AppShellProps) {
     refetchInterval: 60_000,
     staleTime: 30_000,
   })
+
+  // Detecta aumento no contador de não lidas (estilo Outlook): toca um beep e
+  // mostra um toast flutuante por notificação nova. `previousUnreadCount` fica
+  // undefined até a primeira carga — evita disparar toasts para o que já existia.
+  const previousUnreadCount = useRef<number | undefined>(undefined)
+  const pushNotificationToast = useNotificationToastStore((s) => s.push)
+
+  useEffect(() => {
+    const current = unreadQuery.data
+    if (current === undefined) return
+
+    const previous = previousUnreadCount.current
+    previousUnreadCount.current = current
+
+    if (previous === undefined || current <= previous) return
+
+    const delta = current - previous
+    playNotificationBeep()
+
+    notificationApi
+      .getList({ unreadOnly: true, limit: Math.min(delta, 5) })
+      .then((res) => {
+        for (const n of res.notifications) {
+          pushNotificationToast({ key: `notif-${n.id}-${Date.now()}`, title: n.title, message: n.message })
+        }
+      })
+      .catch(() => {/* silencioso — o sininho já mostra o contador atualizado */})
+  }, [unreadQuery.data, pushNotificationToast])
 
   const notificationsQuery = useQuery({
     queryKey: ['notifications-list', tenant?.code],
@@ -167,6 +197,20 @@ export function AppShell({ title, subtitle, children }: AppShellProps) {
                   {unreadQuery.data > 9 ? '9+' : unreadQuery.data}
                 </span>
               )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                goTo('/reports')
+                setSettingsOpen(false)
+                setUserMenuOpen(false)
+                setNotificationsOpen(false)
+              }}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-blue-50 hover:text-blue-700"
+              title="Relatorios"
+            >
+              <i className="bi bi-file-earmark-bar-graph text-base" aria-hidden />
             </button>
 
             {!isClienteAccess && (

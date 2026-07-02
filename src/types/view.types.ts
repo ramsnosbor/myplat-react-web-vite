@@ -88,7 +88,7 @@ export interface Navbar {
 
 // ─── Object Definition ────────────────────────────────────────────────────────
 
-export type ObjectType = 'crud' | 'table' | 'filter' | 'panel' | 'calendar' | 'bulkEditTable' | 'wizard' | 'chart' | 'grid' | 'tree' | 'questionarioBuilder' | 'questionarioResponder'
+export type ObjectType = 'crud' | 'table' | 'filter' | 'panel' | 'calendar' | 'bulkEditTable' | 'wizard' | 'chart' | 'grid' | 'tree' | 'questionarioBuilder' | 'questionarioResponder' | 'questionarioModelo' | 'iframe' | 'attachments' | 'approvalList' | 'workflowDiagram'
 export type ObjectMode = 'create' | 'edit' | 'detail' | ''
 export type ObjectVariant = 'modal' | 'page' | 'inline' | ''
 
@@ -224,6 +224,21 @@ export interface ObjectDefinition {
   // Childs: renderiza objetos filhos embutidos abaixo deste objeto
   childs?: string[]
   childLayout?: 'vertical' | 'horizontal' | 'grid'
+  /** Atualização automática recorrente (filter/crud principal da tela — não modal).
+   *  Exibe um controle discreto de liga/desliga; enquanto ligado, invalida a entidade
+   *  (e affectedEntities) a cada N segundos, indefinidamente, até o usuário desligar.
+   *  Não para sozinho por mudança de status — só para quando o usuário mandar. */
+  autoRefresh?: {
+    /** Intervalo entre atualizações, em segundos */
+    seconds: number
+    /** Entidades adicionais a invalidar a cada tick (além da própria entity do objeto) */
+    affectedEntities?: string[]
+    /** Se true, já inicia ligado ao montar a tela (default: false) */
+    enabledByDefault?: boolean
+  }
+  /** IDs de objetos (ex: um FilterObject com autoRefresh) a religar ao salvar este
+   *  objeto com sucesso — mesmo que o usuário tenha desligado manualmente antes. */
+  resumeAutoRefresh?: string[]
   components: ComponentDefinition[]
 }
 
@@ -265,6 +280,10 @@ export interface CrudAction {
   visibleOn?: string[]
   visible?: string | boolean
   tooltip?: string
+  /** Permissao de acao exigida no menu atual: criar | editar | exportar | imprimir | auditar | cancelar. */
+  permission?: string
+  requiredAction?: string
+  actionPermission?: string
   reloadAfterAction?: boolean
   /** Entidades adicionais a invalidar após sucesso (complementa result.affectedEntities do script) */
   affectedEntities?: string[]
@@ -520,6 +539,10 @@ export interface ComponentAction {
   style?: Record<string, string>  // CSS inline no botão
   tooltip?: string
   confirmation?: string
+  /** Permissao de acao exigida no menu atual: criar | editar | exportar | imprimir | auditar | cancelar. */
+  permission?: string
+  requiredAction?: string
+  actionPermission?: string
   type?: string         // para export: "PDF" | "CSV"
   url?: string          // para navigate: rota destino
   /** Tipos aceitos pelo seletor de arquivo em action="uploadNavigate". */

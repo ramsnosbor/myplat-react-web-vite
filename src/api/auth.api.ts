@@ -63,6 +63,7 @@ export type NivelAcesso = 'sem_acesso' | 'leitor' | 'editor' | 'admin'
  * Formato real da API: { "94": "editor", "95": "leitor", ... }
  */
 export type AclMap = Record<string, NivelAcesso>
+export type ActionAclMap = Record<string, string[]>
 
 /** Resposta real do GET /api/sso/permissions */
 export interface PermissionsResponse {
@@ -71,7 +72,7 @@ export interface PermissionsResponse {
   perfis?: Array<{ idPerfil: number; nome: string; tipo: string }>
   /** Mapa plano: { menuId: nivel } — IDs numéricos como string */
   menus: AclMap
-  acoes?: Record<string, string[]>
+  acoes?: ActionAclMap
   homeMenuId?: number | null
   homePath?: string | null
   cachedAt?: string

@@ -91,14 +91,14 @@ export function filterModules(
   options: FilterModulesOptions = {},
 ): ModuleDefinition[] {
   const hasAcl = Object.keys(acl).length > 0
-  const shouldApplyAcl = !options.unrestricted && (hasAcl || options.failClosed)
+  const shouldApplyAcl = hasAcl || !options.unrestricted
 
   return allModules
     .filter((mod) => tenantModuleIds.size === 0 || tenantModuleIds.has(mod.idModulo))
     .map((mod) => ({
       ...mod,
       menus: shouldApplyAcl
-        ? filterMenusByAcl(mod.menus ?? [], acl, Boolean(options.failClosed && !hasAcl))
+        ? filterMenusByAcl(mod.menus ?? [], acl)
         : sortMenusByModuleOrder(mod.menus ?? []),
     }))
     .filter((mod) => mod.menus.length > 0)
@@ -123,9 +123,7 @@ function normalizeOrder(value: number | string | undefined) {
   return Number.isFinite(numberValue) ? numberValue : Number.MAX_SAFE_INTEGER
 }
 
-function filterMenusByAcl(menus: ModuleDefinition['menus'], acl: AclMap, forceEmpty: boolean) {
-  if (forceEmpty) return []
-
+function filterMenusByAcl(menus: ModuleDefinition['menus'], acl: AclMap) {
   const sorted = sortMenusByModuleOrder(menus ?? [])
   const childrenByParent = sorted.reduce((acc, menu) => {
     if (!menu.parentmenu) return acc

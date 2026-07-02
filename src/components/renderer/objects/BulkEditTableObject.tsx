@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useStore } from 'zustand'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEntityQuery } from '@/hooks/useEntityQuery'
@@ -13,6 +13,8 @@ import { evalExpr, resolveTemplate } from '@/utils/evalExpr'
 import { resolveColClass } from '@/utils/colClass'
 import type { ObjectDefinition, ComponentDefinition, SubmitAction, ComponentAction } from '@/types/view.types'
 import type { EntityRecord } from '@/types/entity.types'
+import { useAuthStore } from '@/store/authStore'
+import { isActionAllowed, resolveCurrentMenuId } from '@/utils/actionPermissions'
 
 interface Props { objectDef: ObjectDefinition }
 
@@ -150,6 +152,19 @@ function formatStatic(value: unknown, col: ComponentDefinition): string {
 }
 
 
+function isActionVisible(visible: string | boolean | undefined, row: Record<string, unknown>): boolean {
+  if (visible === undefined || visible === null) return true
+  if (typeof visible === 'boolean') return visible
+  let expr = String(visible).trim()
+  if (!expr.includes('{{')) {
+    expr = expr.replace(/^([a-zA-Z_]\w*)\s*=([^=<>!].*)$/, '{{$1}}==$2')
+  } else {
+    expr = expr.replace(/\}\}\s*=(?![=])/g, '}}==')
+  }
+  const result = evalExpr(expr, row)
+  return result !== false && result !== 0 && result !== '' && result !== null && result !== undefined
+}
+
 function evalComputed(formula: string, rowData: Record<string, unknown>): number | null {
   try {
     const expr = formula.replace(/\{\{(\w+)\}\}/g, (_, key) => {
@@ -274,6 +289,14 @@ export function BulkEditTableObject({ objectDef }: Props) {
   const queryClient = useQueryClient()
   const toast = useToast()
   const navigate = useNavigate()
+  const location = useLocation()
+  const modules = useAuthStore((s) => s.modules)
+  const hasActionAccess = useAuthStore((s) => s.hasActionAccess)
+  const currentMenuId = resolveCurrentMenuId(modules, location.pathname)
+  const isPermittedAction = useCallback(
+    (action: ComponentAction) => isActionAllowed(action, currentMenuId, hasActionAccess),
+    [currentMenuId, hasActionAccess],
+  )
   const connectionParams = useConnectionParams(objectDef.id)
   const enabled = useConnectionEnabled(objectDef.id)
 
@@ -619,14 +642,21 @@ export function BulkEditTableObject({ objectDef }: Props) {
   // ─── Colunas ───────────────────────────────────────────────────────────────
   const allCols = (objectDef.components ?? []).filter(c => c.idObject === objectDef.id)
   const generalActions = allCols.filter(c => c.type === 'generalActions')
+  const permittedGeneralActions = generalActions.flatMap(ga => ga.actions ?? []).filter(isPermittedAction)
   // 'actions' é componente normal — aparece no corpo do card na posição do grid
-  const cols = allCols.filter(c => c.type !== 'generalActions')
+  const cols = allCols
+    .filter(c => c.type !== 'generalActions')
+    .map((c) => c.type === 'actions' ? { ...c, actions: (c.actions ?? []).filter(isPermittedAction) } : c)
 
   // Modo panel: usa panelColClass (ex: "col-md-6") para cards em grid
   const isPanelMode = !!objectDef.panelColClass
   const selectable = objectDef.selectable !== false
-  const showDeleteButtons = objectDef.deleteShow !== false
+  const canCreate = hasActionAccess(currentMenuId, 'criar')
+  const canEdit = hasActionAccess(currentMenuId, 'editar')
+  const canCancel = hasActionAccess(currentMenuId, 'cancelar')
+  const showDeleteButtons = objectDef.deleteShow !== false && canCancel
   const hasChanges = selectedRows.size > 0 || deletedRows.size > 0 || newRows.length > 0
+  const canSubmit = (newRows.length > 0 && canCreate) || (selectedRows.size > 0 && canEdit) || (deletedRows.size > 0 && canCancel)
 
   const allRows: Array<{ row: RowRecord; idx: number; isNew: boolean; newOffset?: number }> = [
     ...serverRows.map((row, idx) => ({ row: { ...row, ...(editedData[idx] ?? {}) }, idx, isNew: false })),
@@ -662,7 +692,7 @@ export function BulkEditTableObject({ objectDef }: Props) {
         </div>
         <div className="flex items-center gap-2">
           {/* generalActions */}
-          {generalActions.flatMap(ga => ga.actions ?? []).map((action, i) => (
+          {permittedGeneralActions.map((action, i) => (
             <button key={i} type="button"
               disabled={!enabled}
               title={!enabled ? 'Selecione ou salve o registro principal para habilitar esta ação' : (action.tooltip ?? action.title ?? action.name ?? '')}
@@ -680,7 +710,7 @@ export function BulkEditTableObject({ objectDef }: Props) {
             </button>
           ))}
           {/* Add row */}
-          {addRowCfg && (
+          {addRowCfg && canCreate && (
             <button type="button" onClick={handleAddRow} disabled={!enabled}
               title={!enabled ? 'Selecione ou salve o registro principal para habilitar esta ação' : undefined}
               className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
@@ -690,7 +720,7 @@ export function BulkEditTableObject({ objectDef }: Props) {
           )}
           {/* Submit */}
           {(objectDef.submitActions?.length ?? 0) > 0 && (
-            <button type="button" onClick={handleSubmit} disabled={isSaving || !hasChanges || !enabled}
+            <button type="button" onClick={handleSubmit} disabled={isSaving || !hasChanges || !enabled || !canSubmit}
               title={!enabled ? 'Selecione ou salve o registro principal para habilitar esta ação' : undefined}
               className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
               {isSaving ? <><div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" /> Processando...</> : objectDef.submitLabel ?? 'Salvar'}
@@ -781,7 +811,7 @@ export function BulkEditTableObject({ objectDef }: Props) {
                           {col.type === 'actions' ? (
                             // Botões de ação por linha — mesmo padrão do table mode
                             <div className="flex flex-wrap gap-1" style={col.valueStyle as React.CSSProperties}>
-                              {(col.actions ?? []).map((act, ai) => (
+                              {(col.actions ?? []).filter(act => isActionVisible(act.visible, row)).map((act, ai) => (
                                 <button
                                   key={ai}
                                   type="button"
@@ -884,7 +914,7 @@ export function BulkEditTableObject({ objectDef }: Props) {
                           style={col.style as React.CSSProperties}>
                           {col.type === 'actions' ? (
                             <div className="flex items-center gap-1" style={col.valueStyle as React.CSSProperties}>
-                              {(col.actions ?? []).map((act, ai) => (
+                              {(col.actions ?? []).filter(act => isActionVisible(act.visible, row)).map((act, ai) => (
                                 <button key={ai} type="button"
                                   title={act.tooltip ?? act.title ?? act.name ?? act.action}
                                   onClick={() => handleRowAction(act, row)}

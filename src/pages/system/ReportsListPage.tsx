@@ -222,19 +222,24 @@ function RunModal({
                 const inputType = isDateRange ? 'date' : isNumberRange ? 'number'
                   : f.type === 'DATE' ? 'date' : f.type === 'NUMBER' ? 'number' : 'text'
 
+                const selectValues = Array.isArray(f.options) && f.options.length > 0
+                  ? f.options
+                  : f.predefinedValues
+                const isSelect = Array.isArray(selectValues) && selectValues.length > 0
+
                 return (
                   <div key={f.field}>
                     <label className="mb-1 block text-xs font-medium text-slate-700">{f.label}</label>
 
-                    {Array.isArray(f.predefinedValues) && f.predefinedValues.length > 0 ? (
+                    {isSelect ? (
                       <select
                         className={inputClass}
                         value={filterValues[f.field] ?? ''}
                         onChange={(e) => setFilter(f.field, e.target.value)}
                       >
-                        <option value="">— Todos —</option>
-                        {f.predefinedValues.map((v) => (
-                          <option key={v} value={v}>{v}</option>
+                        {!selectValues.includes('') && <option value="">— Todos —</option>}
+                        {selectValues.map((v) => (
+                          <option key={v} value={v}>{v === '' ? '— Todos —' : v}</option>
                         ))}
                       </select>
                     ) : isRange ? (

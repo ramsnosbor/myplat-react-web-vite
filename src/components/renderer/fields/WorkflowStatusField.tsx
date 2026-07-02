@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useStore } from 'zustand'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { UseFormSetValue, UseFormGetValues } from 'react-hook-form'
@@ -7,6 +8,7 @@ import { entityApi } from '@/api/entity.api'
 import { notificationApi } from '@/api/notification.api'
 import { useViewContext } from '../ViewContext'
 import { useAuthStore } from '@/store/authStore'
+import { getUserId } from '@/lib/jwt'
 import { nowBRT } from '@/utils/dateUtils'
 
 interface WorkflowRow {
@@ -65,10 +67,13 @@ export function WorkflowStatusField({
   formValues,
   disabled,
 }: WorkflowStatusFieldProps) {
-  const { screenParams } = useViewContext()
+  const { viewStore, screenParams } = useViewContext()
+  const setPageContext = useStore(viewStore, (s) => s.setPageContext)
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const currentUser = useAuthStore((s) => s.user)
+  const token = useAuthStore((s) => s.token)
+  const idUsuarioAtual = token ? getUserId(token) : null
 
   const statusField = comp.nameForm ?? comp.name
   const entityWf = (comp as any).entityWorkflow ?? 'vw_workflow_status'
@@ -81,6 +86,7 @@ export function WorkflowStatusField({
   const nmReferenciaField: string = (comp as any).nmReferenciaField ?? ''
   const dsTituloAprovacao: string = (comp as any).dsTituloAprovacao ?? entidadeProcesso
   const nmUrlDetalhe: string = (comp as any).nmUrlDetalhe ?? ''
+  const vlReferenciaField: string = (comp as any).vlReferenciaField ?? ''
 
   // "" tratado como null — buildDefaultValues inicializa todos os campos como "" em create/edit
   const rawStatusId = formValues[statusField]
@@ -134,18 +140,24 @@ export function WorkflowStatusField({
 
   const statusInfo = rows[0] ?? null
 
-  // ─── Propaga permissões para virtual fields do form ───────────────────────────
+  // ─── Propaga permissões para virtual fields do form e para o page context ──────
   useEffect(() => {
     if (!statusInfo) return
     setValue('_wf_permite_editar' as any, statusInfo.fl_permite_editar)
     setValue('_wf_permite_excluir' as any, statusInfo.fl_permite_excluir)
     setValue('_wf_estado_final' as any, statusInfo.fl_estado_final)
+    setPageContext({
+      _wf_permite_editar: statusInfo.fl_permite_editar,
+      _wf_permite_excluir: statusInfo.fl_permite_excluir,
+      _wf_estado_final: statusInfo.fl_estado_final,
+    })
   }, [statusInfo, setValue])
 
   // ─── Create: bloqueia save até status inicial chegar, depois preenche ─────────
   useEffect(() => {
     if (!isCreateMode || currentStatusId != null) return
     setValue('_wf_permite_editar' as any, 'Não')
+    setPageContext({ _wf_permite_editar: 'Não' })
   }, [])
 
   useEffect(() => {
@@ -155,6 +167,11 @@ export function WorkflowStatusField({
     setValue('_wf_permite_editar' as any, initialRows[0].fl_permite_editar)
     setValue('_wf_permite_excluir' as any, initialRows[0].fl_permite_excluir)
     setValue('_wf_estado_final' as any, initialRows[0].fl_estado_final)
+    setPageContext({
+      _wf_permite_editar: initialRows[0].fl_permite_editar,
+      _wf_permite_excluir: initialRows[0].fl_permite_excluir,
+      _wf_estado_final: initialRows[0].fl_estado_final,
+    })
   }, [initialRows, currentStatusId, isCreateMode])
 
   // ─── Mutation: executa transição numa única transação via /default/many ────────
@@ -214,6 +231,7 @@ export function WorkflowStatusField({
             nm_url_detalhe: nmUrlDetalhe || null,
             ds_chave_detalhe: nmUrlDetalhe ? String(currentPk) : null,
             nm_solicitante: currentUser?.name ?? currentUser?.username ?? null,
+            id_solicitante: idUsuarioAtual != null ? String(idUsuarioAtual) : null,
             dt_solicitacao: dtNow,
             ds_situacao: 'Pendente',
             id_status_aprovado: row.id_status_aprovado != null ? String(row.id_status_aprovado) : null,
@@ -223,6 +241,11 @@ export function WorkflowStatusField({
               : null,
             nm_campo_pk: chavePrimaria,
             nm_campo_status: statusField,
+            vl_referencia: vlReferenciaField
+              ? (getValues(vlReferenciaField as any) != null && getValues(vlReferenciaField as any) !== ''
+                  ? String(getValues(vlReferenciaField as any))
+                  : null)
+              : null,
           },
         }
       }

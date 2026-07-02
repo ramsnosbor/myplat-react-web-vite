@@ -11,6 +11,9 @@ export interface ObjectState {
   queryParams: Record<string, unknown>
   /** Modo atual do objeto crud */
   mode: 'create' | 'edit' | 'detail' | 'list' | null
+  /** Liga/desliga do auto-refresh recorrente (FilterObject.autoRefresh) — compartilhado
+   *  no store para que outros objetos (ex: um modal ao salvar) possam religá-lo. */
+  autoRefreshOn?: boolean
 }
 
 // ─── Store da view (uma instância por ViewRenderer) ──────────────────────────
@@ -20,6 +23,9 @@ export interface ViewStoreState {
   setObjectState: (objectId: string, state: Partial<ObjectState>) => void
   resetObject: (objectId: string) => void
   getObjectState: (objectId: string) => ObjectState
+  /** Variáveis transient com escopo de página — acessíveis por qualquer componente da view */
+  pageContext: Record<string, unknown>
+  setPageContext: (values: Record<string, unknown>) => void
 }
 
 const defaultObjectState = (): ObjectState => ({
@@ -36,6 +42,7 @@ const defaultObjectState = (): ObjectState => ({
 export function createViewStore() {
   return createStore<ViewStoreState>()((set, get) => ({
     objects: {},
+    pageContext: {},
 
     setObjectState(objectId, state) {
       set((prev) => ({
@@ -61,6 +68,12 @@ export function createViewStore() {
 
     getObjectState(objectId) {
       return get().objects[objectId] ?? defaultObjectState()
+    },
+
+    setPageContext(values) {
+      set((prev) => ({
+        pageContext: { ...prev.pageContext, ...values },
+      }))
     },
   }))
 }
